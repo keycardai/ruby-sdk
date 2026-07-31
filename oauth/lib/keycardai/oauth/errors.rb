@@ -83,6 +83,30 @@ module Keycardai
     # The token's +kid+ is not present in the issuer's fetched JWKS.
     class JWKSKeyNotFoundError < JWKSError; end
 
+    # Raised by AccessContext#access when a token cannot be handed out. The
+    # error_type identifies the condition: global_error (a context-wide error
+    # is set), resource_error (the named resource's exchange failed), or
+    # missing_token (the resource was never granted). For missing_token,
+    # available_resources lists what was granted.
+    class ResourceAccessError < Keycardai::Error
+      # @return [String]
+      attr_reader :resource
+      # @return [String] global_error | resource_error | missing_token
+      attr_reader :error_type
+      # @return [Array<String>]
+      attr_reader :available_resources
+      # @return [Object, nil] the recorded upstream error, when one exists
+      attr_reader :error_details
+
+      def initialize(message, resource:, error_type:, available_resources: [], error_details: nil)
+        super(message)
+        @resource = resource
+        @error_type = error_type
+        @available_resources = available_resources
+        @error_details = error_details
+      end
+    end
+
     # A workload-identity source is misconfigured at construction: missing
     # token file, no discovery env var set, missing required audience.
     # Carries the source identifier (file, gcp-metadata, fly, custom).

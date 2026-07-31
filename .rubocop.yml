@@ -19,6 +19,8 @@ Metrics/MethodLength:
 
 Metrics/AbcSize:
   Max: 20
+  Exclude:
+    - "**/*_spec.rb"
 
 Metrics/ClassLength:
   Max: 150
@@ -28,3 +30,9 @@ Metrics/ParameterLists:
 
 Lint/UnusedMethodArgument:
   AllowUnusedKeywordArguments: true
+
+# AccessContext's set_token / set_bulk_tokens / set_resource_error / set_error
+# names are the cross-SDK contract (keycard-sdk-spec access-context.md).
+Naming/AccessorMethodName:
+  Exclude:
+    - "oauth/lib/keycardai/oauth/access_context.rb"
