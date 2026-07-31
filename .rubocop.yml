@@ -13,3 +13,18 @@ Metrics/BlockLength:
   Exclude:
     - "**/*_spec.rb"
     - "**/*.gemspec"
+
+Metrics/MethodLength:
+  Max: 15
+
+Metrics/AbcSize:
+  Max: 20
+
+Metrics/ClassLength:
+  Max: 150
+
+Metrics/ParameterLists:
+  CountKeywordArgs: false
+
+Lint/UnusedMethodArgument:
+  AllowUnusedKeywordArguments: true

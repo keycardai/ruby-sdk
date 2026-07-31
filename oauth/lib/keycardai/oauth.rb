@@ -1,13 +1,14 @@
 # frozen_string_literal: true
 
 require_relative "oauth/version"
+require_relative "oauth/errors"
+require_relative "oauth/http"
+require_relative "oauth/jwks_keyring"
+require_relative "oauth/jwt_signer"
+require_relative "oauth/jwt_verifier"
 
 # Root namespace shared by all Keycard gems.
 module Keycardai
-  # Root of the Keycard error taxonomy. Every error raised by any Keycard gem
-  # is a subclass, so `rescue Keycardai::Error` catches the whole family.
-  class Error < StandardError; end
-
   # OAuth 2.0 primitives for the Keycard platform: token exchange (RFC 8693),
   # client credentials, authorization code + PKCE, dynamic client registration
   # (RFC 7591), authorization server discovery (RFC 8414), JWT/JWKS
