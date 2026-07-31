@@ -52,37 +52,46 @@ module Keycardai
 
       private
 
-      def initialize_token_client(issuer:, client_id:, client_secret:, http_client:, timeout:)
-        if (client_id.nil? || client_secret.nil?) && client_id != client_secret
-          raise ConfigurationError, "client_id and client_secret must be provided together"
-        end
+      def initialize_token_client(issuer:, credential:, client_id:, client_secret:, http_client:, timeout:)
+        validate_client_auth(credential, client_id, client_secret)
 
         @issuer = issuer
-        @client_id = client_id
-        @client_secret = client_secret
+        @credential = credential || (client_id ? ClientSecret.new(client_id, client_secret) : nil)
         @http_client = http_client
         @timeout = timeout
-        @token_endpoint = nil
+        @token_endpoints = {}
         @token_endpoint_mutex = Mutex.new
       end
 
-      # Discover the zone's token endpoint once and cache it.
-      def token_endpoint
+      def validate_client_auth(credential, client_id, client_secret)
+        if credential && (client_id || client_secret)
+          raise ConfigurationError, "provide a credential or a client_id/client_secret pair, not both"
+        end
+        return unless (client_id.nil? || client_secret.nil?) && client_id != client_secret
+
+        raise ConfigurationError, "client_id and client_secret must be provided together"
+      end
+
+      # Discover a zone's token endpoint once and cache it, keyed by issuer
+      # so multi-zone clients never reuse another zone's endpoint.
+      def token_endpoint(issuer = @issuer)
         @token_endpoint_mutex.synchronize do
-          @token_endpoint ||= begin
-            metadata = OAuth.fetch_authorization_server_metadata(@issuer, http_client: @http_client,
-                                                                          timeout: @timeout)
+          @token_endpoints[issuer] ||= begin
+            metadata = OAuth.fetch_authorization_server_metadata(issuer, http_client: @http_client,
+                                                                         timeout: @timeout)
             metadata.token_endpoint ||
-              raise(ProtocolError.new("metadata for #{@issuer} has no token_endpoint", code: "invalid_metadata"))
+              raise(ProtocolError.new("metadata for #{issuer} has no token_endpoint", code: "invalid_metadata"))
           end
         end
       end
 
-      def post_token_request(params)
+      def post_token_request(params, issuer: @issuer)
         headers = { "Accept" => "application/json" }
-        headers["Authorization"] = HTTP.basic_authorization(@client_id, @client_secret) if @client_id
+        authorization = @credential&.authorization_header(issuer: issuer)
+        headers["Authorization"] = authorization if authorization
 
-        response = @http_client.post_form(token_endpoint, params.compact, headers: headers, timeout: @timeout)
+        response = @http_client.post_form(token_endpoint(issuer), params.compact, headers: headers,
+                                                                                  timeout: @timeout)
         TokenRequests.parse_response(response)
       end
     end

@@ -13,16 +13,20 @@ module Keycardai
       include TokenRequests
 
       # @param issuer [String] the zone's issuer URL
+      # @param credential [Object, nil] a Basic-auth credential (ClientSecret);
+      #   exclusive with client_id/client_secret. Assertion-based credentials
+      #   supply their assertion through the request fields instead.
       # @param client_id [String, nil] shared-secret client id (HTTP Basic)
       # @param client_secret [String, nil] shared-secret client secret;
       #   provide both or neither
       # @param http_client [#get, #post_form] pluggable transport
       # @param timeout [Numeric, nil] request timeout in seconds
-      # @raise [ConfigurationError] when only one of client_id/client_secret is given
-      def initialize(issuer:, client_id: nil, client_secret: nil,
+      # @raise [ConfigurationError] when only one of client_id/client_secret is
+      #   given, or a credential is combined with a raw pair
+      def initialize(issuer:, credential: nil, client_id: nil, client_secret: nil,
                      http_client: HTTP::NetHTTPClient.new, timeout: nil)
-        initialize_token_client(issuer: issuer, client_id: client_id, client_secret: client_secret,
-                                http_client: http_client, timeout: timeout)
+        initialize_token_client(issuer: issuer, credential: credential, client_id: client_id,
+                                client_secret: client_secret, http_client: http_client, timeout: timeout)
       end
 
       # Request a token for the client itself.
@@ -36,13 +40,17 @@ module Keycardai
       # @raise [OAuthError] an RFC 6749 §5.2 error response (invalid_client,
       #   invalid_scope, ...)
       # @raise [HTTPError, ProtocolError, NetworkError]
-      def request_token(scope: nil, resource: nil, client_assertion: nil, client_assertion_type: nil)
+      def request_token(scope: nil, resource: nil, client_assertion: nil, client_assertion_type: nil,
+                        issuer: nil)
         post_token_request(
-          "grant_type" => GrantType::CLIENT_CREDENTIALS,
-          "scope" => scope,
-          "resource" => resource,
-          "client_assertion" => client_assertion,
-          "client_assertion_type" => client_assertion_type
+          {
+            "grant_type" => GrantType::CLIENT_CREDENTIALS,
+            "scope" => scope,
+            "resource" => resource,
+            "client_assertion" => client_assertion,
+            "client_assertion_type" => client_assertion_type
+          },
+          issuer: issuer || @issuer
         )
       end
     end
