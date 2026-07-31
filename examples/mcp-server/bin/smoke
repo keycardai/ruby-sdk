@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Boot the example server and verify the HTTP contract the Keycard templates
+# repo checks: /healthz, both .well-known documents, and the 401 challenge.
+# KEYCARD_URL must point at a reachable zone (any live zone works; the AS
+# proxy only fetches public metadata).
+set -euo pipefail
+
+PORT="${PORT:-8000}"
+BASE="http://127.0.0.1:${PORT}"
+cd "$(dirname "$0")/.."
+
+bundle exec rackup -q -p "$PORT" -o 127.0.0.1 &
+SERVER_PID=$!
+trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+
+for _ in $(seq 1 20); do
+  curl -fsS "$BASE/healthz" >/dev/null 2>&1 && break
+  sleep 0.5
+done
+
+echo "healthz:" && curl -fsS "$BASE/healthz"; echo
+echo "protected-resource metadata:"
+curl -fsS "$BASE/.well-known/oauth-protected-resource" | grep -q '"resource"' && echo "  ok"
+echo "authorization-server metadata (proxied from $KEYCARD_URL):"
+curl -fsS "$BASE/.well-known/oauth-authorization-server" | grep -q '"issuer"' && echo "  ok"
+echo "unauthenticated POST /mcp:"
+CHALLENGE=$(curl -s -o /dev/null -D - -X POST "$BASE/mcp" | tr -d '\r')
+echo "$CHALLENGE" | grep -q "^HTTP/1.1 401" && echo "  401 ok"
+echo "$CHALLENGE" | grep -qi "www-authenticate: Bearer .*resource_metadata=" && echo "  challenge ok"
+echo "smoke passed"
