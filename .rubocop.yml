@@ -1,3 +1,9 @@
+# Merge our Exclude entries with RuboCop's defaults (vendor/, .git/, ...)
+# instead of replacing them; CI installs gems into vendor/bundle.
+inherit_mode:
+  merge:
+    - Exclude
+
 AllCops:
   TargetRubyVersion: 3.2
   NewCops: enable
