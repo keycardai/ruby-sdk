@@ -83,6 +83,10 @@ module Keycardai
     # The token's +kid+ is not present in the issuer's fetched JWKS.
     class JWKSKeyNotFoundError < JWKSError; end
 
+    # The user did not complete the browser redirect within the loopback
+    # flow's callback timeout.
+    class InteractionTimeoutError < Keycardai::Error; end
+
     # Raised by AccessContext#access when a token cannot be handed out. The
     # error_type identifies the condition: global_error (a context-wide error
     # is set), resource_error (the named resource's exchange failed), or
