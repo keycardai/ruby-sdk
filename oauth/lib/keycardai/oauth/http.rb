@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "json"
 require "net/http"
 require "uri"
 
@@ -50,6 +51,21 @@ module Keycardai
           request = Net::HTTP::Post.new(uri)
           headers.each { |name, value| request[name] = value }
           request.set_form_data(params)
+          perform(uri, request, timeout)
+        end
+
+        # @param url [String]
+        # @param payload [Hash] request body, sent as application/json
+        # @param headers [Hash{String => String}]
+        # @param timeout [Numeric, nil] open/read timeout in seconds
+        # @return [Response]
+        # @raise [NetworkError] on DNS, TLS, connect, or timeout failures
+        def post_json(url, payload, headers: {}, timeout: nil)
+          uri = URI(url)
+          request = Net::HTTP::Post.new(uri)
+          request["Content-Type"] = "application/json"
+          headers.each { |name, value| request[name] = value }
+          request.body = JSON.dump(payload)
           perform(uri, request, timeout)
         end
 

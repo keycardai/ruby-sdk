@@ -8,6 +8,48 @@ module Keycardai
     # endpoint discovery with caching, shared-secret (HTTP Basic) client
     # authentication, and RFC 6749 §5.2 error parsing. Not public API.
     module TokenRequests
+      # Parse a token-endpoint response: a TokenResponse on 2xx, a raised
+      # typed error otherwise.
+      #
+      # @param response [HTTP::Response]
+      # @return [TokenResponse]
+      def self.parse_response(response)
+        raise error_for(response) unless response.success?
+
+        document = begin
+          JSON.parse(response.body)
+        rescue JSON::ParserError
+          raise ProtocolError.new("token response is not valid JSON", code: "invalid_response")
+        end
+        unless document.is_a?(Hash)
+          raise ProtocolError.new("token response is not a JSON object",
+                                  code: "invalid_response")
+        end
+
+        TokenResponse.from_wire(document)
+      end
+
+      # RFC 6749 §5.2: an error response carries error / error_description /
+      # error_uri. Anything else non-2xx is a plain HTTP error.
+      #
+      # @param response [HTTP::Response]
+      # @return [OAuthError, HTTPError]
+      def self.error_for(response)
+        payload = begin
+          JSON.parse(response.body)
+        rescue JSON::ParserError
+          nil
+        end
+        unless payload.is_a?(Hash) && payload["error"].is_a?(String)
+          return HTTPError.new("token endpoint returned HTTP #{response.status}",
+                               status: response.status, body: response.body)
+        end
+
+        OAuthError.new("token endpoint returned #{payload["error"]}",
+                       error: payload["error"], error_description: payload["error_description"],
+                       error_uri: payload["error_uri"], status: response.status, body: response.body)
+      end
+
       private
 
       def initialize_token_client(issuer:, client_id:, client_secret:, http_client:, timeout:)
@@ -41,39 +83,7 @@ module Keycardai
         headers["Authorization"] = HTTP.basic_authorization(@client_id, @client_secret) if @client_id
 
         response = @http_client.post_form(token_endpoint, params.compact, headers: headers, timeout: @timeout)
-        raise token_error(response) unless response.success?
-
-        TokenResponse.from_wire(parse_token_body(response))
-      end
-
-      def parse_token_body(response)
-        document = JSON.parse(response.body)
-        unless document.is_a?(Hash)
-          raise ProtocolError.new("token response is not a JSON object",
-                                  code: "invalid_response")
-        end
-
-        document
-      rescue JSON::ParserError
-        raise ProtocolError.new("token response is not valid JSON", code: "invalid_response")
-      end
-
-      # RFC 6749 §5.2: an error response carries error / error_description /
-      # error_uri. Anything else non-2xx is a plain HTTP error.
-      def token_error(response)
-        payload = begin
-          JSON.parse(response.body)
-        rescue JSON::ParserError
-          nil
-        end
-        unless payload.is_a?(Hash) && payload["error"].is_a?(String)
-          return HTTPError.new("token endpoint returned HTTP #{response.status}",
-                               status: response.status, body: response.body)
-        end
-
-        OAuthError.new("token endpoint returned #{payload["error"]}",
-                       error: payload["error"], error_description: payload["error_description"],
-                       error_uri: payload["error_uri"], status: response.status, body: response.body)
+        TokenRequests.parse_response(response)
       end
     end
   end
