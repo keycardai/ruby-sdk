@@ -1,13 +1,15 @@
 # Examples
 
-Runnable apps proving the gems against real frameworks and a real Keycard zone.
-Each example carries its own Gemfile and consumes the gems via `path:` sources.
+Runnable apps proving the gems against real frameworks. Each example carries
+its own Gemfile and consumes the gems via `path:` sources.
+
+- [`mcp-server/`](mcp-server/): an MCP server built on the official `mcp` gem,
+  protected by `keycardai-mcp` bearer middleware and metadata endpoints. Comes
+  with `bin/smoke` (the templates-repo HTTP contract, needs a reachable zone)
+  and `bin/selftest` (hermetic end-to-end proof with a stub zone and real
+  signed tokens; no network).
 
 Planned (see ruby-sdk-plan.md):
 
-- `mcp-server/`: an MCP server built on the official `mcp` gem, protected by
-  `keycardai-mcp` bearer middleware and metadata endpoints. Lands with phase 2;
-  verified with MCP Inspector plus a smoke script mirroring the templates
-  repo's `ci-verify.sh` contract.
 - `a2a-delegation/`: two local agents demonstrating discover, exchange, invoke
-  with identity flow-through. Lands with phase 3.
+  with identity flow-through. Lands with the live-zone E2E phase.

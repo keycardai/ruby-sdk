@@ -1,0 +1,120 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Hermetic end-to-end proof: stand up a stub Keycard zone (discovery + JWKS,
+# with a real RSA key), boot the example server against it, and drive the
+# full flow with curl-equivalent HTTP calls, including a signed bearer token
+# calling the hello tool through the official mcp gem. No network, no live
+# zone.
+
+require "bundler/setup"
+require "json"
+require "jwt"
+require "net/http"
+require "openssl"
+require "webrick"
+
+failures = []
+check = lambda do |name, condition|
+  puts(condition ? "  ok   #{name}" : "  FAIL #{name}")
+  failures << name unless condition
+end
+
+# --- stub zone -------------------------------------------------------------
+zone_port = 9481
+server_port = 9482
+issuer = "http://127.0.0.1:#{zone_port}"
+key = OpenSSL::PKey::RSA.new(2048)
+jwk = JWT::JWK.new(key.public_key, { kid: "kid-selftest", use: "sig", alg: "RS256" })
+
+zone = WEBrick::HTTPServer.new(Port: zone_port, BindAddress: "127.0.0.1",
+                               Logger: WEBrick::Log.new(File::NULL), AccessLog: [])
+zone.mount_proc("/.well-known/oauth-authorization-server") do |_req, res|
+  res["content-type"] = "application/json"
+  res.body = JSON.dump({
+    "issuer" => issuer,
+    "token_endpoint" => "#{issuer}/oauth/token",
+    "authorization_endpoint" => "#{issuer}/oauth/authorize",
+    "jwks_uri" => "#{issuer}/.well-known/jwks.json",
+  })
+end
+zone.mount_proc("/.well-known/jwks.json") do |_req, res|
+  res["content-type"] = "application/json"
+  res.body = JSON.dump({ "keys" => [jwk.export.transform_keys(&:to_s)] })
+end
+zone_thread = Thread.new { zone.start }
+
+# --- example server --------------------------------------------------------
+server_pid = spawn(
+  { "KEYCARD_URL" => issuer, "KEYCARD_RESOURCE_ID" => "mcp-server-ruby-selftest" },
+  "bundle", "exec", "rackup", "-q", "-p", server_port.to_s, "-o", "127.0.0.1",
+  chdir: File.expand_path("..", __dir__),
+)
+
+base = URI("http://127.0.0.1:#{server_port}")
+http = Net::HTTP.new(base.host, base.port)
+40.times do
+  break if http.get("/healthz").code == "200"
+rescue StandardError
+  sleep 0.25
+end
+
+begin
+  puts "contract checks:"
+  check.call("healthz", http.get("/healthz").code == "200")
+
+  resource_doc = http.get("/.well-known/oauth-protected-resource")
+  check.call("protected-resource metadata", resource_doc.code == "200" &&
+    JSON.parse(resource_doc.body)["authorization_servers"] == [issuer])
+
+  as_doc = http.get("/.well-known/oauth-authorization-server")
+  check.call("AS metadata proxied with resource rewrite", as_doc.code == "200" &&
+    JSON.parse(as_doc.body)["authorization_endpoint"].include?("resource=http"))
+
+  bare = http.post("/mcp", JSON.dump({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+                   { "content-type" => "application/json" })
+  check.call("bare POST /mcp is 401", bare.code == "401")
+  check.call("challenge advertises resource_metadata",
+             bare["www-authenticate"].to_s.include?("resource_metadata="))
+
+  now = Time.now.to_i
+  token = JWT.encode(
+    { "iss" => issuer, "sub" => "usr_selftest", "aud" => "http://127.0.0.1:#{server_port}",
+      "exp" => now + 300, "iat" => now, "client_id" => "client_selftest", "scope" => "mcp:tools" },
+    key, "RS256", { "kid" => "kid-selftest" }
+  )
+  auth = { "content-type" => "application/json", "authorization" => "Bearer #{token}" }
+
+  list = http.post("/mcp", JSON.dump({ jsonrpc: "2.0", id: 2, method: "tools/list" }), auth)
+  check.call("authenticated tools/list", list.code == "200" &&
+    JSON.parse(list.body).dig("result", "tools").any? { |tool| tool["name"] == "hello" })
+
+  call = http.post("/mcp", JSON.dump(
+                             { jsonrpc: "2.0", id: 3, method: "tools/call",
+                               params: { name: "hello", arguments: { name: "Keycard" } } },
+                           ), auth)
+  check.call("authenticated tools/call", call.code == "200" &&
+    JSON.parse(call.body).dig("result", "content", 0, "text") == "Hello, Keycard!")
+
+  wrong_scope_token = JWT.encode(
+    { "iss" => issuer, "sub" => "usr_selftest", "aud" => "x", "exp" => now + 300,
+      "iat" => now, "client_id" => "client_selftest", "scope" => "other" },
+    key, "RS256", { "kid" => "kid-selftest" }
+  )
+  scoped = http.post("/mcp", JSON.dump({ jsonrpc: "2.0", id: 4, method: "tools/list" }),
+                     { "content-type" => "application/json", "authorization" => "Bearer #{wrong_scope_token}" })
+  check.call("missing scope is 403 insufficient_scope", scoped.code == "403" &&
+    scoped["www-authenticate"].to_s.include?("insufficient_scope"))
+ensure
+  Process.kill("TERM", server_pid)
+  Process.wait(server_pid)
+  zone.shutdown
+  zone_thread.join
+end
+
+if failures.empty?
+  puts "selftest passed"
+else
+  puts "selftest FAILED: #{failures.join(", ")}"
+  exit 1
+end
