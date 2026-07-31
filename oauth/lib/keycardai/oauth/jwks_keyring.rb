@@ -115,20 +115,11 @@ module Keycardai
       end
 
       def discover_jwks_uri(issuer)
-        response = get_or_raise(metadata_url(issuer), JWKSDiscoveryError, "discovery for #{issuer}")
-        metadata = parse_json(response.body) do
-          raise JWKSDiscoveryError, "discovery for #{issuer} returned invalid JSON"
-        end
-        metadata["jwks_uri"] || raise(JWKSDiscoveryError, "metadata for #{issuer} has no jwks_uri")
-      end
-
-      # RFC 8414: the well-known path segment is inserted between the host and
-      # any issuer path component.
-      def metadata_url(issuer)
-        uri = URI(issuer)
-        path = uri.path.chomp("/")
-        uri.path = "/.well-known/oauth-authorization-server#{path}"
-        uri.to_s
+        metadata = OAuth.fetch_authorization_server_metadata(issuer, http_client: @http_client,
+                                                                     timeout: @fetch_timeout)
+        metadata.jwks_uri || raise(JWKSDiscoveryError, "metadata for #{issuer} has no jwks_uri")
+      rescue HTTPError, ProtocolError, NetworkError, ConfigurationError => e
+        raise JWKSDiscoveryError, "discovery for #{issuer} failed: #{e.message}"
       end
 
       def assert_same_origin(issuer, jwks_uri)
@@ -142,26 +133,19 @@ module Keycardai
       end
 
       def fetch_jwks(jwks_uri)
-        response = get_or_raise(jwks_uri, JWKSFetchError, "JWKS fetch from #{jwks_uri}")
-        document = parse_json(response.body) { raise JWKSFetchError, "JWKS from #{jwks_uri} is invalid JSON" }
-        document["keys"] || raise(JWKSFetchError, "JWKS from #{jwks_uri} has no keys field")
-      end
-
-      def get_or_raise(url, error_class, action)
         response = begin
-          @http_client.get(url, headers: { "Accept" => "application/json" }, timeout: @fetch_timeout)
+          @http_client.get(jwks_uri, headers: { "Accept" => "application/json" }, timeout: @fetch_timeout)
         rescue NetworkError => e
-          raise error_class, "#{action} failed: #{e.message}"
+          raise JWKSFetchError, "JWKS fetch from #{jwks_uri} failed: #{e.message}"
         end
-        raise error_class, "#{action} returned HTTP #{response.status}" unless response.success?
+        raise JWKSFetchError, "JWKS fetch from #{jwks_uri} returned HTTP #{response.status}" unless response.success?
 
-        response
-      end
-
-      def parse_json(body)
-        JSON.parse(body)
-      rescue JSON::ParserError
-        yield
+        document = begin
+          JSON.parse(response.body)
+        rescue JSON::ParserError
+          raise JWKSFetchError, "JWKS from #{jwks_uri} is invalid JSON"
+        end
+        document["keys"] || raise(JWKSFetchError, "JWKS from #{jwks_uri} has no keys field")
       end
 
       def import_key(jwk)

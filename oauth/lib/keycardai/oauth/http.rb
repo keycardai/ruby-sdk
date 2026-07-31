@@ -18,6 +18,13 @@ module Keycardai
         end
       end
 
+      # Build an HTTP Basic Authorization header value (RFC 7617).
+      #
+      # @return [String]
+      def self.basic_authorization(client_id, client_secret)
+        "Basic #{["#{client_id}:#{client_secret}"].pack("m0")}"
+      end
+
       # Default transport backed by Net::HTTP. TLS is used for https URLs.
       class NetHTTPClient
         # @param url [String]
@@ -29,6 +36,20 @@ module Keycardai
           uri = URI(url)
           request = Net::HTTP::Get.new(uri)
           headers.each { |name, value| request[name] = value }
+          perform(uri, request, timeout)
+        end
+
+        # @param url [String]
+        # @param params [Hash] form fields, sent application/x-www-form-urlencoded
+        # @param headers [Hash{String => String}]
+        # @param timeout [Numeric, nil] open/read timeout in seconds
+        # @return [Response]
+        # @raise [NetworkError] on DNS, TLS, connect, or timeout failures
+        def post_form(url, params, headers: {}, timeout: nil)
+          uri = URI(url)
+          request = Net::HTTP::Post.new(uri)
+          headers.each { |name, value| request[name] = value }
+          request.set_form_data(params)
           perform(uri, request, timeout)
         end
 
