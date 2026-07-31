@@ -2,6 +2,8 @@
 
 require "keycardai/a2a"
 
+Dir[File.join(__dir__, "support", "**", "*.rb")].each { |file| require file }
+
 RSpec.configure do |config|
   config.disable_monkey_patching!
   config.expect_with :rspec do |expectations|
