@@ -82,5 +82,31 @@ module Keycardai
 
     # The token's +kid+ is not present in the issuer's fetched JWKS.
     class JWKSKeyNotFoundError < JWKSError; end
+
+    # A workload-identity source is misconfigured at construction: missing
+    # token file, no discovery env var set, missing required audience.
+    # Carries the source identifier (file, gcp-metadata, fly, custom).
+    class WorkloadIdentityConfigurationError < ConfigurationError
+      # @return [String]
+      attr_reader :source
+
+      def initialize(message, source:)
+        super(message)
+        @source = source
+      end
+    end
+
+    # A workload-identity source failed at request time: file unreadable or
+    # empty, endpoint unreachable, non-200 response, empty token. Carries the
+    # source identifier and preserves the underlying cause.
+    class WorkloadIdentityRuntimeError < Keycardai::Error
+      # @return [String]
+      attr_reader :source
+
+      def initialize(message, source:)
+        super(message)
+        @source = source
+      end
+    end
   end
 end
