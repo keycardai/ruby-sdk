@@ -2,6 +2,9 @@
 
 require "keycardai/oauth"
 require_relative "a2a/version"
+require_relative "a2a/errors"
+require_relative "a2a/service_discovery"
+require_relative "a2a/delegation_client"
 
 module Keycardai
   # Agent-to-agent delegation: one agent calls another on the user's behalf.
