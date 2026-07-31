@@ -27,6 +27,11 @@ class FakeHTTPClient
     @handler.call(url, params)
   end
 
+  def post_json(url, payload, headers: {}, timeout: nil)
+    record(:post_json, url, payload, headers)
+    @handler.call(url, payload)
+  end
+
   def request_count(url)
     @mutex.synchronize { @requests.count(url) }
   end

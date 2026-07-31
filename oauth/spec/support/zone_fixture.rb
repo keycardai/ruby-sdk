@@ -13,13 +13,14 @@ end
 # An in-memory Keycard zone for conformance tests: an issuer with RSA signing
 # keys, RFC 8414 metadata, and a JWKS document, wired to a FakeHTTPClient.
 class ZoneFixture
-  attr_reader :issuer, :metadata_url, :jwks_url, :token_url
+  attr_reader :issuer, :metadata_url, :jwks_url, :token_url, :registration_url
 
   def initialize(issuer: "https://acme.test", kids: ["kid-1"])
     @issuer = issuer
     @metadata_url = "#{issuer}/.well-known/oauth-authorization-server"
     @jwks_url = "#{issuer}/.well-known/jwks.json"
     @token_url = "#{issuer}/oauth/token"
+    @registration_url = "#{issuer}/oauth/register"
     @keys = kids.to_h { |kid| [kid, OpenSSL::PKey::RSA.new(2048)] }
   end
 
@@ -29,7 +30,8 @@ class ZoneFixture
 
   def metadata(jwks_uri: @jwks_url)
     { "issuer" => @issuer, "jwks_uri" => jwks_uri, "token_endpoint" => @token_url,
-      "authorization_endpoint" => "#{@issuer}/oauth/authorize" }
+      "authorization_endpoint" => "#{@issuer}/oauth/authorize",
+      "registration_endpoint" => @registration_url }
   end
 
   def jwks
