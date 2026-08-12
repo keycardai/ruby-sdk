@@ -53,7 +53,9 @@ keycard-sdk-spec maps to a `spec/conformance/<spec-slug>_spec.rb` implementing
 its Testing tables.
 
 Design decisions and the Ruby idiom profile are in
-[docs/idiom-profile.md](docs/idiom-profile.md).
+[docs/idiom-profile.md](docs/idiom-profile.md). Where this SDK stands against
+the spec, including live-zone results and findings raised upstream, is in
+[docs/conformance-report.md](docs/conformance-report.md).
 
 ## Commits
 
