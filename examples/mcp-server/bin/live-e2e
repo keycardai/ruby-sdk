@@ -1,0 +1,163 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Live-zone end-to-end run: executes the Integration Tests rows from the
+# keycard-sdk-spec specs against a real Keycard zone. Every block is guarded,
+# so a partial config still runs what it can and reports the rest as SKIP
+# with the reason.
+#
+# Config (env, or a gitignored .env in this directory):
+#   KEYCARD_URL               required. The zone issuer, https://<zone-id>.keycard.cloud
+#   KEYCARD_CLIENT_ID         app credential identifier
+#   KEYCARD_CLIENT_SECRET     app credential password
+#   KEYCARD_RESOURCE_ID       a resource identifier registered in the zone
+#   KEYCARD_IMPERSONATE_USER  a user identifier the app may impersonate
+#
+# Impersonation is what makes this runnable headlessly: it mints a real
+# zone-issued token without a browser login, and that token then drives the
+# inbound verification and middleware rows.
+
+require "bundler/setup"
+require "json"
+require "keycardai/mcp"
+
+env_file = File.expand_path("../.env", __dir__)
+File.readlines(env_file).each do |line|
+  next if line.strip.empty? || line.start_with?("#")
+
+  name, _, value = line.strip.partition("=")
+  ENV[name] ||= value.delete_prefix('"').delete_suffix('"')
+end if File.exist?(env_file)
+
+ISSUER = ENV.fetch("KEYCARD_URL") { abort "KEYCARD_URL is required" }
+CLIENT_ID = ENV["KEYCARD_CLIENT_ID"]
+CLIENT_SECRET = ENV["KEYCARD_CLIENT_SECRET"]
+RESOURCE = ENV["KEYCARD_RESOURCE_ID"]
+IMPERSONATE = ENV["KEYCARD_IMPERSONATE_USER"]
+
+results = []
+def record(results, spec, row, outcome, detail) = results << [spec, row, outcome, detail]
+
+def run(results, spec, row, guard: nil)
+  return record(results, spec, row, "SKIP", guard) if guard
+
+  detail = yield
+  record(results, spec, row, "PASS", detail)
+rescue StandardError => e
+  record(results, spec, row, "FAIL", "#{e.class}: #{e.message}")
+end
+
+creds = { client_id: CLIENT_ID, client_secret: CLIENT_SECRET }
+need_app = CLIENT_ID.nil? ? "no KEYCARD_CLIENT_ID/SECRET" : nil
+need_resource = RESOURCE.nil? ? "no KEYCARD_RESOURCE_ID" : nil
+need_user = IMPERSONATE.nil? ? "no KEYCARD_IMPERSONATE_USER" : nil
+
+puts "live zone: #{ISSUER}"
+puts
+
+metadata = nil
+run(results, "authorization-server-discovery", "1: discover against a live zone") do
+  metadata = Keycardai::OAuth.fetch_authorization_server_metadata(ISSUER)
+  raise "issuer mismatch" unless metadata.issuer.chomp("/") == ISSUER.chomp("/")
+
+  "token_endpoint + jwks_uri present, #{metadata.raw.keys.length} fields"
+end
+
+keyring = Keycardai::OAuth::JWKSKeyring.new
+run(results, "jwks-caching", "1: resolve a live signing kid, second call cached") do
+  kid = JSON.parse(Net::HTTP.get(URI(metadata.jwks_uri))).fetch("keys").first.fetch("kid")
+  cold = Time.now
+  key = keyring.key(ISSUER, kid)
+  mid = Time.now
+  keyring.key(ISSUER, kid)
+  "#{key.n.num_bits}-bit RSA, cold #{((mid - cold) * 1000).round}ms, cached #{((Time.now - mid) * 1000).round}ms"
+end
+
+run(results, "client-credentials", "1: acquire a token for a registered client", guard: need_app) do
+  client = Keycardai::OAuth::ClientCredentialsClient.new(issuer: ISSUER, **creds)
+  token = client.request_token(resource: RESOURCE)
+  "#{token.token_type} token, expires_in=#{token.expires_in}, scopes=#{token.scope.inspect}"
+end
+
+run(results, "client-credentials", "2: an invalid client secret is invalid_client", guard: need_app) do
+  client = Keycardai::OAuth::ClientCredentialsClient.new(
+    issuer: ISSUER, client_id: CLIENT_ID, client_secret: "#{CLIENT_SECRET}-wrong",
+  )
+  client.request_token
+  raise "expected rejection, got a token"
+rescue Keycardai::OAuth::OAuthError => e
+  raise "expected invalid_client, got #{e.error}" unless e.error == "invalid_client"
+
+  "rejected with invalid_client"
+end
+
+exchange = need_app ? nil : Keycardai::OAuth::TokenExchangeClient.new(issuer: ISSUER, **creds)
+
+run(results, "token-exchange", "2: a malformed subject token is invalid_grant", guard: need_app) do
+  exchange.exchange_token(subject_token: "not-a-real-token", resource: RESOURCE)
+  raise "expected rejection, got a token"
+rescue Keycardai::OAuth::OAuthError => e
+  "rejected with #{e.error}"
+end
+
+impersonated = nil
+run(results, "impersonation", "1: impersonate a user; sub is the user and act is present",
+    guard: need_app || need_resource || need_user) do
+  impersonated = exchange.impersonate(user_identifier: IMPERSONATE, resource: RESOURCE)
+  claims = JSON.parse(impersonated.access_token.split(".")[1].then do |part|
+    padded = part.tr("-_", "+/")
+    (padded + ("=" * ((4 - (padded.length % 4)) % 4))).unpack1("m0")
+  end)
+  raise "sub is #{claims["sub"].inspect}, expected #{IMPERSONATE.inspect}" unless claims["sub"] == IMPERSONATE
+
+  "sub=#{claims["sub"]}, act=#{claims["act"].inspect}, aud=#{claims["aud"].inspect}"
+end
+
+verifier = Keycardai::OAuth::TokenVerifier.new(issuers: ISSUER, audiences: RESOURCE)
+
+run(results, "jwt-signing-and-verification", "2: verify a real zone token, second verify cached",
+    guard: impersonated.nil? ? (need_user || "no token to verify") : nil) do
+  access = verifier.verify_token(impersonated.access_token)
+  verifier.verify_token(impersonated.access_token)
+  "verified: sub=#{access.subject}, client_id=#{access.client_id}, scopes=#{access.scopes.inspect}"
+end
+
+run(results, "bearer-token-verification-middleware", "1: a real token through the Rack middleware",
+    guard: impersonated.nil? ? (need_user || "no token to present") : nil) do
+  ran = false
+  app = ->(env) { ran = true and [200, {}, ["ok"]] }
+  middleware = Keycardai::MCP::RequireBearerAuth.new(app, verifier: verifier)
+  status, = middleware.call(
+    { "REQUEST_METHOD" => "POST", "PATH_INFO" => "/mcp", "rack.url_scheme" => "https",
+      "HTTP_HOST" => "tool.example.com",
+      "HTTP_AUTHORIZATION" => "Bearer #{impersonated.access_token}" },
+  )
+  raise "handler did not run (status #{status})" unless ran && status == 200
+
+  "handler ran with the verified auth context"
+end
+
+run(results, "access-context", "1: delegated exchange populates an AccessContext",
+    guard: impersonated.nil? ? (need_user || "no subject token") : nil) do
+  context = Keycardai::OAuth.exchange_tokens_for_resources(
+    client: exchange, resources: [RESOURCE], subject_token: impersonated.access_token,
+  )
+  raise "context reported errors: #{context.errors.inspect}" if context.errors?
+
+  "status=#{context.status}, granted #{context.successful_resources.length} resource(s)"
+end
+
+run(results, "token-exchange", "3: an unregistered resource is invalid_target", guard: need_app) do
+  subject = impersonated&.access_token || "placeholder"
+  exchange.exchange_token(subject_token: subject, resource: "https://not-registered.invalid/x")
+  raise "expected rejection, got a token"
+rescue Keycardai::OAuth::OAuthError => e
+  "rejected with #{e.error}"
+end
+
+puts format("%-38s %-52s %-5s %s", "SPEC", "ROW", "", "DETAIL")
+results.each { |spec, row, outcome, detail| puts format("%-38s %-52s %-5s %s", spec, row, outcome, detail) }
+puts
+counts = results.group_by { |r| r[2] }.transform_values(&:length)
+puts "pass=#{counts.fetch("PASS", 0)} fail=#{counts.fetch("FAIL", 0)} skip=#{counts.fetch("SKIP", 0)}"
+exit(counts.fetch("FAIL", 0).zero? ? 0 : 1)
