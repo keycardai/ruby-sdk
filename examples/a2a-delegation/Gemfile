@@ -1,0 +1,10 @@
+# frozen_string_literal: true
+
+source "https://rubygems.org"
+
+gem "keycardai-a2a", path: "../../a2a"
+gem "keycardai-mcp", path: "../../mcp"
+gem "keycardai-oauth", path: "../../oauth"
+
+gem "rackup"
+gem "webrick"

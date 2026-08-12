@@ -1,0 +1,156 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Hermetic proof of the A2A delegation contract: discover, exchange, invoke,
+# with the user's identity surviving the hop. Stands up a stub zone that
+# performs a real RFC 8693 exchange (verifying client auth, preserving the
+# subject, re-scoping the audience, and recording the caller in `act`), boots
+# both agents, and drives agent A. No live zone, no network.
+#
+# The stub zone emits `act` because that is what the impersonation and
+# token-exchange contracts call for. A live Keycard zone does not populate it
+# for the credential-authenticated flow, which is tracked as a finding.
+
+require "bundler/setup"
+require "json"
+require "jwt"
+require "net/http"
+require "openssl"
+require "webrick"
+
+ZONE_PORT = 9600
+AGENT_B_PORT = 9601
+AGENT_A_PORT = 9602
+ISSUER = "http://127.0.0.1:#{ZONE_PORT}"
+AGENT_B_URL = "http://127.0.0.1:#{AGENT_B_PORT}"
+USER = "usr_alice"
+CLIENT_ID = "agent-a-client"
+CLIENT_SECRET = "agent-a-secret"
+
+failures = []
+check = lambda do |name, ok, detail = nil|
+  puts(ok ? "  ok   #{name}#{detail ? " (#{detail})" : ""}" : "  FAIL #{name}#{detail ? ": #{detail}" : ""}")
+  failures << name unless ok
+end
+
+key = OpenSSL::PKey::RSA.new(2048)
+jwk = JWT::JWK.new(key.public_key, { kid: "kid-a2a", use: "sig", alg: "RS256" })
+
+def mint(key, issuer:, sub:, aud:, act: nil, client_id: "agent-a-client")
+  now = Time.now.to_i
+  claims = { "iss" => issuer, "sub" => sub, "aud" => aud, "exp" => now + 300, "iat" => now,
+             "client_id" => client_id }
+  claims["act"] = act if act
+  JWT.encode(claims, key, "RS256", { "kid" => "kid-a2a" })
+end
+
+# --- stub zone: discovery, JWKS, and an RFC 8693 token endpoint ------------
+zone = WEBrick::HTTPServer.new(Port: ZONE_PORT, BindAddress: "127.0.0.1",
+                               Logger: WEBrick::Log.new(File::NULL), AccessLog: [])
+zone.mount_proc("/.well-known/oauth-authorization-server") do |_req, res|
+  res["content-type"] = "application/json"
+  res.body = JSON.dump({ "issuer" => ISSUER, "token_endpoint" => "#{ISSUER}/oauth/token",
+                         "jwks_uri" => "#{ISSUER}/.well-known/jwks.json" })
+end
+zone.mount_proc("/.well-known/jwks.json") do |_req, res|
+  res["content-type"] = "application/json"
+  res.body = JSON.dump({ "keys" => [jwk.export.transform_keys(&:to_s)] })
+end
+
+exchanges = []
+zone.mount_proc("/oauth/token") do |req, res|
+  params = URI.decode_www_form(req.body.to_s).to_h
+  auth = req["authorization"].to_s
+  expected = "Basic #{["#{CLIENT_ID}:#{CLIENT_SECRET}"].pack("m0")}"
+  res["content-type"] = "application/json"
+
+  if auth != expected
+    res.status = 401
+    res.body = JSON.dump({ "error" => "invalid_client" })
+    next
+  end
+
+  exchanges << params
+  subject_claims = JWT.decode(params.fetch("subject_token"), nil, false).first
+  # The contract: the subject is carried through untouched, the audience is
+  # re-scoped to the requested resource, and the calling client lands in `act`.
+  issued = mint(key, issuer: ISSUER, sub: subject_claims.fetch("sub"),
+                     aud: params.fetch("resource"), act: { "sub" => CLIENT_ID })
+  res.body = JSON.dump({ "access_token" => issued, "token_type" => "Bearer",
+                         "issued_token_type" => "urn:ietf:params:oauth:token-type:access_token",
+                         "expires_in" => 300 })
+end
+zone_thread = Thread.new { zone.start }
+
+# --- both agents ----------------------------------------------------------
+shared = { "KEYCARD_URL" => ISSUER, "AGENT_B_URL" => AGENT_B_URL }
+b_pid = spawn(shared, "bundle", "exec", "rackup", "-q", "agent_b.ru",
+              "-p", AGENT_B_PORT.to_s, "-o", "127.0.0.1", chdir: File.expand_path("..", __dir__))
+a_pid = spawn(shared.merge("KEYCARD_CLIENT_ID" => CLIENT_ID, "KEYCARD_CLIENT_SECRET" => CLIENT_SECRET),
+              "bundle", "exec", "rackup", "-q", "agent_a.ru",
+              "-p", AGENT_A_PORT.to_s, "-o", "127.0.0.1", chdir: File.expand_path("..", __dir__))
+
+def wait_for(port)
+  40.times do
+    return true if Net::HTTP.get_response(URI("http://127.0.0.1:#{port}/healthz")).code == "200"
+  rescue StandardError
+    sleep 0.25
+  end
+  false
+end
+
+begin
+  puts "delegation checks:"
+  check.call("agent B is up", wait_for(AGENT_B_PORT))
+  check.call("agent A is up", wait_for(AGENT_A_PORT))
+
+  card = JSON.parse(Net::HTTP.get(URI("#{AGENT_B_URL}/.well-known/agent-card.json")))
+  check.call("agent B publishes a card with a name", card["name"] == "agent-b", card["url"])
+
+  # An unauthenticated JSON-RPC call must be refused with a challenge.
+  bare = Net::HTTP.post(URI("#{AGENT_B_URL}/a2a/jsonrpc"), "{}", { "content-type" => "application/json" })
+  check.call("agent B refuses an unauthenticated call", bare.code == "401" &&
+    bare["www-authenticate"].to_s.include?("resource_metadata"))
+
+  # The real path: agent A delegates the user's token to agent B.
+  user_token = mint(key, issuer: ISSUER, sub: USER, aud: "http://127.0.0.1:#{AGENT_A_PORT}")
+  response = Net::HTTP.post(URI("http://127.0.0.1:#{AGENT_A_PORT}/delegate"),
+                            JSON.dump({ "text" => "summarise the incident" }),
+                            { "content-type" => "application/json",
+                              "authorization" => "Bearer #{user_token}" })
+  body = JSON.parse(response.body)
+  check.call("agent A completed a delegated call", response.code == "200", body["path"])
+  reported = body.dig("agent_b", "verifiedSubject")
+  check.call("the user's identity survived the hop", reported == USER, "agent B verified sub=#{reported.inspect}")
+  check.call("agent B's token was re-scoped to agent B",
+             body.dig("agent_b", "verifiedAudience") == [AGENT_B_URL])
+  check.call("the calling agent is recorded in act",
+             body.dig("agent_b", "verifiedActor", "sub") == CLIENT_ID)
+  check.call("the exchange carried the user token as subject",
+             exchanges.any? { |e| e["subject_token"] == user_token && e["resource"] == AGENT_B_URL })
+  check.call("the exchange used the token-exchange grant",
+             exchanges.last["grant_type"] == "urn:ietf:params:oauth:grant-type:token-exchange")
+
+  # Audience binding: a token minted for somewhere else must not open agent B.
+  wrong = mint(key, issuer: ISSUER, sub: USER, aud: "https://elsewhere.example")
+  refused = Net::HTTP.post(URI("#{AGENT_B_URL}/a2a/jsonrpc"), JSON.dump({ "id" => 1 }),
+                           { "content-type" => "application/json", "authorization" => "Bearer #{wrong}" })
+  check.call("agent B rejects a token minted for another audience", refused.code == "401")
+ensure
+  [b_pid, a_pid].each do |pid|
+    Process.kill("TERM", pid)
+    Process.wait(pid)
+  rescue StandardError
+    nil
+  end
+  zone.shutdown
+  zone_thread.join
+end
+
+puts
+if failures.empty?
+  puts "selftest passed (#{exchanges.length} exchange(s) performed)"
+else
+  puts "selftest FAILED: #{failures.join(", ")}"
+  exit 1
+end
