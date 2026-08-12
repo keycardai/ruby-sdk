@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# Provision the Keycard objects bin/live-e2e needs, via the Management API
+# using the operator's own `keycard auth signin` session. Idempotent: every
+# write is preceded by a read, so re-running a provisioned zone writes
+# nothing. Writes credentials to a gitignored .env; secret values never reach
+# stdout.
+#
+#   keycard auth signin --org <org-id> --zone <zone-id>
+#   ZONE=<zone-id> ORG=<org-id> bin/provision
+#
+# `env -u KEYCARD_SOCKET` is required: inside a `keycard run` session the CLI
+# routes through the session server, which drops Content-Type on request
+# bodies and the API answers 415.
+set -euo pipefail
+
+ZONE="${ZONE:?set ZONE to the zone id}"
+ORG="${ORG:?set ORG to the org id}"
+APP_IDENTIFIER="${APP_IDENTIFIER:-urn:app:ruby-sdk-e2e}"
+RESOURCE_ID="${RESOURCE_ID:-http://localhost:8000/mcp}"
+DOWNSTREAM_ID="${DOWNSTREAM_ID:-https://downstream.example/api}"
+ENVF="$(cd "$(dirname "$0")/.." && pwd)/.env"
+
+k() { env -u KEYCARD_SOCKET keycard agent api "$@" -z "$ZONE" -o "$ORG"; }
+jget() { python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('$1',''))"; }
+first_id() { python3 -c "import sys,json;i=json.load(sys.stdin).get('items',[]);print(i[0]['id'] if i else '')"; }
+
+echo "zone: $(k '/zones/{zone}' | jget name) ($ZONE)"
+
+# The STS provider mints tokens for zone resources. Created with the zone.
+STS=$(k '/zones/{zone}/providers' | python3 -c "
+import sys,json
+for i in json.load(sys.stdin).get('items',[]):
+    if i.get('type') == 'keycard-sts':
+        print(i['id']); break
+")
+[ -n "$STS" ] || { echo "no keycard-sts provider in this zone" >&2; exit 1; }
+echo "  sts provider: $STS"
+
+# Application. consent=implicit because the E2E is headless: 'required' would
+# demand a consent screen with nobody present to click it.
+APP=$(k "/zones/{zone}/applications?identifier=$APP_IDENTIFIER" | first_id)
+if [ -z "$APP" ]; then
+  APP=$(k '/zones/{zone}/applications' -X POST \
+    -d "{\"name\":\"ruby-sdk-e2e\",\"identifier\":\"$APP_IDENTIFIER\",\"consent\":\"implicit\"}" | jget id)
+  echo "  application created: $APP"
+else
+  echo "  application already present: $APP"
+fi
+
+# Resources, both STS-backed. The first must match what the server advertises.
+ensure_resource() {
+  local identifier="$1" name="$2" scope="$3" id
+  id=$(k "/zones/{zone}/resources?identifier=$identifier" | first_id)
+  if [ -z "$id" ]; then
+    id=$(k '/zones/{zone}/resources' -X POST \
+      -d "{\"name\":\"$name\",\"identifier\":\"$identifier\",\"credential_provider_id\":\"$STS\",\"scopes_supported\":[\"$scope\"]}" | jget id)
+    echo "  resource created: $identifier -> $id" >&2
+  else
+    echo "  resource already present: $identifier -> $id" >&2
+  fi
+  # Dependencies are what let the application obtain tokens for the resource.
+  k "/zones/{zone}/applications/$APP/dependencies/$id" -X PUT >/dev/null
+  echo "$id"
+}
+ensure_resource "$RESOURCE_ID" "Ruby MCP Server" "mcp:tools" >/dev/null
+ensure_resource "$DOWNSTREAM_ID" "Downstream API" "read" >/dev/null
+
+# Impersonation matches a user's `identifier`, which is not their email.
+USER_ID=$(k '/zones/{zone}/users' | first_id)
+[ -n "$USER_ID" ] || echo "  WARNING: no zone users; the impersonation rows will skip" >&2
+echo "  impersonation subject: ${USER_ID:-none}"
+
+# A password credential returns its secret only at creation, so it is piped
+# straight to .env. An existing .env with a secret is left alone, because
+# re-minting would orphan the old credential.
+if grep -q '^KEYCARD_CLIENT_SECRET=.' "$ENVF" 2>/dev/null; then
+  echo "  credential already in .env, leaving it"
+else
+  k '/zones/{zone}/application-credentials' -X POST -d "{\"application_id\":\"$APP\",\"type\":\"password\"}" \
+  | ZONE_URL="https://$ZONE.keycard.cloud" ENVF="$ENVF" RESOURCE_ID="$RESOURCE_ID" \
+    DOWNSTREAM_ID="$DOWNSTREAM_ID" USER_ID="$USER_ID" python3 -c '
+import json, os, sys
+d = json.load(sys.stdin)
+cid, secret = d.get("identifier"), d.get("password")
+if not cid or not secret:
+    sys.exit("unexpected credential response, keys: %s" % sorted(d))
+with open(os.environ["ENVF"], "w") as f:
+    f.write("\n".join([
+        "KEYCARD_URL=" + os.environ["ZONE_URL"],
+        "KEYCARD_CLIENT_ID=" + cid,
+        "KEYCARD_CLIENT_SECRET=" + secret,
+        "KEYCARD_RESOURCE_ID=" + os.environ["RESOURCE_ID"],
+        "KEYCARD_DOWNSTREAM_RESOURCE_ID=" + os.environ["DOWNSTREAM_ID"],
+        "KEYCARD_IMPERSONATE_USER=" + os.environ["USER_ID"],
+    ]) + "\n")
+print("  credential created: client_id=%s (secret -> .env, %d chars)" % (cid, len(secret)))
+'
+  chmod 600 "$ENVF"
+fi
+
+echo
+echo "provisioned. run: bin/live-e2e"
