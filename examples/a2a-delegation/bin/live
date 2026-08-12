@@ -1,0 +1,120 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Live variant: run both agents against a real Keycard zone and prove that a
+# genuine zone-issued token carries the user's identity across the hop, with
+# agent B verifying it independently against the zone's JWKS.
+#
+#   keycard auth signin --org <org-id> --zone <zone-id>
+#   ZONE=<zone-id> ORG=<org-id> bin/live
+#
+# Credentials come from ../mcp-server/.env (gitignored). Agent B is registered
+# as a zone resource on first run so its URL is a valid exchange audience.
+#
+# A live zone will not re-exchange a substitute-user token, so agent A takes
+# its impersonation path here rather than the inbound-token path. The
+# inbound-token path is what bin/selftest proves end to end.
+
+require "bundler/setup"
+require "json"
+require "net/http"
+
+ZONE = ENV.fetch("ZONE") { abort "set ZONE to the zone id" }
+ORG = ENV.fetch("ORG") { abort "set ORG to the org id" }
+AGENT_B_PORT = 9601
+AGENT_A_PORT = 9602
+AGENT_B_URL = "http://127.0.0.1:#{AGENT_B_PORT}"
+
+env_file = File.expand_path("../../mcp-server/.env", __dir__)
+abort "expected #{env_file}; run ../mcp-server/bin/provision first" unless File.exist?(env_file)
+creds = File.readlines(env_file).to_h { |l| l.strip.split("=", 2) }.reject { |k, _| k.to_s.empty? }
+
+failures = []
+check = lambda do |name, ok, detail = nil|
+  puts(ok ? "  ok   #{name}#{detail ? " (#{detail})" : ""}" : "  FAIL #{name}#{detail ? ": #{detail}" : ""}")
+  failures << name unless ok
+end
+
+def api(path, method: "GET", body: nil)
+  args = ["keycard", "agent", "api", path, "-z", ENV.fetch("ZONE"), "-o", ENV.fetch("ORG"),
+          "-X", method]
+  args += ["-d", body] if body
+  out = IO.popen({ "KEYCARD_SOCKET" => nil }, args, err: File::NULL, &:read)
+  out.to_s.empty? ? {} : JSON.parse(out)
+end
+
+puts "zone: #{api("/zones/{zone}")["name"]} (#{ZONE})"
+
+# Agent B must be a registered resource for the zone to mint tokens for it.
+sts = api("/zones/{zone}/providers").fetch("items", []).find { |p| p["type"] == "keycard-sts" }
+abort "no keycard-sts provider in zone" unless sts
+existing = api("/zones/{zone}/resources?identifier=#{AGENT_B_URL}").fetch("items", []).first
+resource = existing || api("/zones/{zone}/resources", method: "POST", body: JSON.dump(
+  { "name" => "Agent B", "identifier" => AGENT_B_URL,
+    "credential_provider_id" => sts["id"], "scopes_supported" => ["a2a"] },
+))
+puts "  agent B resource: #{resource["id"]}#{existing ? " (already present)" : " (created)"}"
+
+app = api("/zones/{zone}/applications?identifier=urn:app:ruby-sdk-e2e").fetch("items", []).first
+abort "application urn:app:ruby-sdk-e2e not found; run ../mcp-server/bin/provision" unless app
+api("/zones/{zone}/applications/#{app["id"]}/dependencies/#{resource["id"]}", method: "PUT")
+puts "  app -> agent B dependency ensured"
+
+shared = { "KEYCARD_URL" => creds.fetch("KEYCARD_URL"), "AGENT_B_URL" => AGENT_B_URL }
+b_pid = spawn(shared, "bundle", "exec", "rackup", "-q", "agent_b.ru",
+              "-p", AGENT_B_PORT.to_s, "-o", "127.0.0.1", chdir: File.expand_path("..", __dir__))
+a_pid = spawn(shared.merge(
+                "KEYCARD_CLIENT_ID" => creds.fetch("KEYCARD_CLIENT_ID"),
+                "KEYCARD_CLIENT_SECRET" => creds.fetch("KEYCARD_CLIENT_SECRET"),
+                "KEYCARD_IMPERSONATE_USER" => creds.fetch("KEYCARD_IMPERSONATE_USER"),
+              ), "bundle", "exec", "rackup", "-q", "agent_a.ru",
+              "-p", AGENT_A_PORT.to_s, "-o", "127.0.0.1", chdir: File.expand_path("..", __dir__))
+
+def wait_for(port)
+  40.times do
+    return true if Net::HTTP.get_response(URI("http://127.0.0.1:#{port}/healthz")).code == "200"
+  rescue StandardError
+    sleep 0.25
+  end
+  false
+end
+
+begin
+  puts
+  puts "live delegation checks:"
+  check.call("agent B is up", wait_for(AGENT_B_PORT))
+  check.call("agent A is up", wait_for(AGENT_A_PORT))
+
+  bare = Net::HTTP.post(URI("#{AGENT_B_URL}/a2a/jsonrpc"), "{}", { "content-type" => "application/json" })
+  check.call("agent B refuses an unauthenticated call", bare.code == "401")
+
+  response = Net::HTTP.post(URI("http://127.0.0.1:#{AGENT_A_PORT}/delegate"),
+                            JSON.dump({ "text" => "live delegation" }),
+                            { "content-type" => "application/json" })
+  body = JSON.parse(response.body)
+  check.call("agent A completed a call via the live zone", response.code == "200",
+             body["path"] || body["message"])
+  reported = body.dig("agent_b", "verifiedSubject")
+  check.call("agent B verified a real zone token for the user",
+             reported == creds.fetch("KEYCARD_IMPERSONATE_USER"), "sub=#{reported.inspect}")
+  check.call("the token was scoped to agent B", body.dig("agent_b", "verifiedAudience") == [AGENT_B_URL])
+
+  actor = body.dig("agent_b", "verifiedActor")
+  puts "  note act claim from the live zone: #{actor.inspect} " \
+       "(the spec expects an actor chain; svc-sts only sets one from an explicit actor_token)"
+ensure
+  [b_pid, a_pid].each do |pid|
+    Process.kill("TERM", pid)
+    Process.wait(pid)
+  rescue StandardError
+    nil
+  end
+end
+
+puts
+if failures.empty?
+  puts "live delegation passed"
+else
+  puts "live delegation FAILED: #{failures.join(", ")}"
+  exit 1
+end
