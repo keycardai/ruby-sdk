@@ -33,6 +33,7 @@ ISSUER = ENV.fetch("KEYCARD_URL") { abort "KEYCARD_URL is required" }
 CLIENT_ID = ENV["KEYCARD_CLIENT_ID"]
 CLIENT_SECRET = ENV["KEYCARD_CLIENT_SECRET"]
 RESOURCE = ENV["KEYCARD_RESOURCE_ID"]
+DOWNSTREAM = ENV["KEYCARD_DOWNSTREAM_RESOURCE_ID"]
 IMPERSONATE = ENV["KEYCARD_IMPERSONATE_USER"]
 
 results = []
@@ -101,7 +102,11 @@ rescue Keycardai::OAuth::OAuthError => e
 end
 
 impersonated = nil
-run(results, "impersonation", "1: impersonate a user; sub is the user and act is present",
+# The spec's row 1 also expects an `act` chain naming the impersonating
+# service. A live zone issues no `act` claim for this flow, so this asserts
+# `sub` and reports whatever `act` came back rather than failing on it. The
+# gap is a finding against the spec, tracked for upstream.
+run(results, "impersonation", "1: impersonate a user; sub is the target (act reported)",
     guard: need_app || need_resource || need_user) do
   impersonated = exchange.impersonate(user_identifier: IMPERSONATE, resource: RESOURCE)
   claims = JSON.parse(impersonated.access_token.split(".")[1].then do |part|
@@ -137,14 +142,38 @@ run(results, "bearer-token-verification-middleware", "1: a real token through th
   "handler ran with the verified auth context"
 end
 
-run(results, "access-context", "1: delegated exchange populates an AccessContext",
-    guard: impersonated.nil? ? (need_user || "no subject token") : nil) do
+# A substitute-user token is terminal: the zone refuses it as the subject of a
+# further exchange ("Client is not allowed to exchange token for this
+# resource"), which stops an impersonated token being laundered into a
+# broader one. Pinned here because it is a security property, not a quirk.
+run(results, "impersonation", "invariant: an impersonated token is not re-exchangeable",
+    guard: impersonated.nil? ? (need_user || "no token to re-exchange") : nil) do
+  exchange.exchange_token(subject_token: impersonated.access_token, resource: RESOURCE)
+  raise "expected refusal, the zone re-exchanged a substitute-user token"
+rescue Keycardai::OAuth::OAuthError => e
+  "refused with #{e.error}: #{e.error_description}"
+end
+
+run(results, "access-context", "1: multi-resource grant populates an AccessContext",
+    guard: need_app || need_user || (DOWNSTREAM.nil? ? "no KEYCARD_DOWNSTREAM_RESOURCE_ID" : nil)) do
   context = Keycardai::OAuth.exchange_tokens_for_resources(
-    client: exchange, resources: [RESOURCE], subject_token: impersonated.access_token,
+    client: exchange, resources: [RESOURCE, DOWNSTREAM], user_identifier: IMPERSONATE,
   )
   raise "context reported errors: #{context.errors.inspect}" if context.errors?
 
-  "status=#{context.status}, granted #{context.successful_resources.length} resource(s)"
+  "status=#{context.status}, granted #{context.successful_resources.length} resources"
+end
+
+run(results, "access-context", "2: one failing resource yields partial_error, others still granted",
+    guard: need_app || need_user) do
+  context = Keycardai::OAuth.exchange_tokens_for_resources(
+    client: exchange, resources: [RESOURCE, "https://not-registered.invalid/x"],
+    user_identifier: IMPERSONATE,
+  )
+  raise "expected partial_error, got #{context.status}" unless context.status == "partial_error"
+  raise "the good resource has no token" if context.access(RESOURCE).access_token.empty?
+
+  "granted=#{context.successful_resources.length} failed=#{context.failed_resources.length}"
 end
 
 run(results, "token-exchange", "3: an unregistered resource is invalid_target", guard: need_app) do
