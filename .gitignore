@@ -5,3 +5,8 @@ vendor/bundle/
 coverage/
 .rspec_status
 .DS_Store
+
+# Live-zone credentials for examples/bin/live-e2e. Never commit these.
+.env
+.env.*
+!.env.example
