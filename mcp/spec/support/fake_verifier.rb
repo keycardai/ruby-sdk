@@ -12,12 +12,14 @@ class FakeVerifier
   end
 end
 
-def access_token(token: "at_valid", scope: "mcp:tools", client_id: "client_abc")
-  Keycardai::OAuth::AccessToken.new(
-    token: token,
-    claims: {
-      "iss" => "https://acme.test", "sub" => "usr_123", "aud" => "https://tool.example.com",
-      "exp" => Time.now.to_i + 300, "iat" => Time.now.to_i, "client_id" => client_id, "scope" => scope
-    }
-  )
+def access_token(token: "at_valid", scope: "mcp:tools", client_id: "client_abc",
+                 sub: "usr_123", sub_profile: "user", keycard_app_id: "app_abc")
+  claims = {
+    "iss" => "https://acme.test", "sub" => sub, "aud" => "https://tool.example.com",
+    "exp" => Time.now.to_i + 300, "iat" => Time.now.to_i, "client_id" => client_id,
+    "scope" => scope, "sub_profile" => sub_profile, "keycard_app_id" => keycard_app_id
+  }
+  # A non-Keycard token carries neither Keycard claim; nil drops them so a
+  # caller can build that case.
+  Keycardai::OAuth::AccessToken.new(token: token, claims: claims.compact)
 end

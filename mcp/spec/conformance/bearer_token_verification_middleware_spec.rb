@@ -32,15 +32,41 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
     expect(headers["www-authenticate"]).to include('error="invalid_token"')
   end
 
-  it "4: a valid token proceeds with the auth context exposing client_id, scopes, and expiry" do
+  it "4: a valid token proceeds with the auth context exposing the caller's identity, scopes, and expiry" do
     status, = middleware.call(rack_env(headers: { "Authorization" => "Bearer at_valid" }))
 
     expect(status).to eq(200)
     info = Keycardai::MCP.auth_info(probe.seen_env)
     expect(info.client_id).to eq("client_abc")
+    expect(info.subject).to eq("usr_123")
+    expect(info.subject_profile).to eq("user")
+    expect(info.keycard_app_id).to eq("app_abc")
     expect(info.scopes).to eq(["mcp:tools"])
     expect(info.expires_at).to be > Time.now
     expect(info.audiences).to eq(["https://tool.example.com"])
+  end
+
+  it "4a: an application token reports subject_profile app, with subject equal to keycard_app_id" do
+    app_token = access_token(token: "at_app", sub: "app_abc", sub_profile: "app", keycard_app_id: "app_abc")
+    gated = described_class.new(probe, verifier: FakeVerifier.new("at_app" => app_token))
+
+    gated.call(rack_env(headers: { "Authorization" => "Bearer at_app" }))
+
+    info = Keycardai::MCP.auth_info(probe.seen_env)
+    expect(info.subject_profile).to eq("app")
+    expect(info.subject).to eq(info.keycard_app_id)
+  end
+
+  it "4b: the Keycard claims are optional, so a non-Keycard token reports them as nil" do
+    plain = access_token(token: "at_plain", sub_profile: nil, keycard_app_id: nil)
+    gated = described_class.new(probe, verifier: FakeVerifier.new("at_plain" => plain))
+
+    gated.call(rack_env(headers: { "Authorization" => "Bearer at_plain" }))
+
+    info = Keycardai::MCP.auth_info(probe.seen_env)
+    expect(info.subject_profile).to be_nil
+    expect(info.keycard_app_id).to be_nil
+    expect(info.client_id).to eq("client_abc")
   end
 
   it "5: an invalid token yields 401 invalid_token" do
