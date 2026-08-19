@@ -1,9 +1,10 @@
 # Keycard Ruby SDK
 
-> **Private preview.** This repo is not public and nothing here is published to
-> rubygems.org. Consume it via Bundler `path:`/`git:` sources only (see below).
-> The parity contract it implements lives in
-> [keycard-sdk-spec](https://github.com/keycardai/keycard-sdk-spec).
+> **Preview.** APIs may change between minor versions while the surface settles.
+> The parity contract these gems implement lives in
+> [keycard-sdk-spec](https://github.com/keycardai/keycard-sdk-spec), and where
+> this SDK stands against it is in
+> [docs/conformance-report.md](docs/conformance-report.md).
 
 Ruby SDK for the Keycard agentic identity platform, at contract parity with the
 [Python](https://github.com/keycardai/python-sdk),
@@ -23,19 +24,16 @@ The MCP gem wraps no MCP SDK: it attaches at the Rack seam, and compatibility
 with the official [`mcp` gem](https://github.com/modelcontextprotocol/ruby-sdk)
 is proven by the example server in `examples/`.
 
-## Using the gems (pre-release)
+## Install
 
-Same machine:
-
-```ruby
-gem "keycardai-oauth", path: "../ruby-sdk/oauth"
+```sh
+bundle add keycardai-oauth      # OAuth primitives on their own
+bundle add keycardai-mcp        # protecting an MCP server; pulls in oauth
+bundle add keycardai-a2a        # agent-to-agent delegation; pulls in oauth
 ```
 
-With repo access:
-
-```ruby
-gem "keycardai-oauth", git: "git@github.com:keycardai/ruby-sdk.git", glob: "oauth/*.gemspec"
-```
+Or with `gem install keycardai-oauth`. Each gem's own README has a copy-paste
+quickstart: [oauth](oauth/README.md), [mcp](mcp/README.md), [a2a](a2a/README.md).
 
 ## Development
 
