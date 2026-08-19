@@ -29,3 +29,35 @@ jobs:
           ruby-version: "4.0"
           bundler-cache: true
       - run: bundle exec rake rubocop
+
+  release-tooling:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # commitizen walks tags to find each gem's last release.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install commitizen
+      - name: Unit test the release scripts
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
+      - name: Check for .cz.toml / version.rb drift
+        run: python3 scripts/changelog.py check-drift
+
+  validate-commits:
+    runs-on: ubuntu-latest
+    # Bump PRs are opened by the release app, and their commit subjects are
+    # generated rather than authored. Gating them here would make the bump PR
+    # fail its own validation.
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.type != 'Bot'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install commitizen
+      - run: python3 scripts/changelog.py validate origin/${{ github.base_ref }}

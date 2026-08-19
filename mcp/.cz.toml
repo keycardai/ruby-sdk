@@ -1,0 +1,39 @@
+[tool.commitizen]
+name = "cz_customize"
+version = "0.1.0"
+# RubyGems prerelease syntax ("0.1.0.pre") is not a version scheme commitizen
+# understands. It parses that as PEP 440, renders it back as "0.1.0-rc0", then
+# fails to find that string in version.rb and leaves the file untouched while
+# advancing .cz.toml. Silent drift, no error. Keep versions plain semver.
+version_scheme = "semver"
+version_files = ["lib/keycardai/mcp/version.rb:VERSION"]
+tag_format = "${version}-keycardai-mcp"
+# Required in a monorepo: without it commitizen's walk back for "the last
+# release of this gem" stops at whichever gem tagged most recently.
+ignored_tag_formats = ["${version}-*"]
+update_changelog_on_bump = true
+bump_message = "bump: keycardai-mcp $current_version → $new_version"
+# Flip to false the moment this gem reaches 1.0.0, or breaking changes land as
+# minors.
+major_version_zero = true
+
+[tool.commitizen.customize]
+# The scope must be the full gem name. A short scope like "feat(mcp):" matches
+# nothing here, so detect-changes returns empty and the gem never releases, with
+# no error anywhere. docs/chore/style are deliberately absent: a docs-only change
+# must not cut a release. Literal strings so the regex backslashes are not
+# TOML-escaped.
+changelog_pattern = '^(feat|fix|refactor|perf|test|build|ci|revert)\(keycardai-mcp\)(!)?:'
+# commitizen picks the increment from bump_pattern, which is a separate setting
+# from changelog_pattern and defaults to an unscoped regex. Left at the default,
+# a sibling gem's "feat(keycardai-oauth):" turns this gem's patch into a minor.
+# Scope it, and keep group 1 shaped like "feat(keycardai-mcp)!" so bump_map
+# below can match against it.
+bump_pattern = '^((feat|fix|refactor|perf)\(keycardai-mcp\)!?):'
+
+[tool.commitizen.customize.bump_map]
+"^.+!$" = "MAJOR"
+"^feat" = "MINOR"
+"^fix" = "PATCH"
+"^refactor" = "PATCH"
+"^perf" = "PATCH"

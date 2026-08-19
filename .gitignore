@@ -10,3 +10,7 @@ coverage/
 .env
 .env.*
 !.env.example
+
+# Byte-compiled release scripts (scripts/ is Python; commitizen is a Python tool)
+__pycache__/
+*.pyc
