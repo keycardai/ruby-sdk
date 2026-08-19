@@ -1,0 +1,94 @@
+name: Release Gems
+
+# Tag-triggered. bump_package.py creates <version>-<gem-name> at the bump PR's
+# squash SHA using the release app's token; app tokens do fire workflow
+# triggers, unlike GITHUB_TOKEN.
+#
+# The rubygems.org trusted-publisher record matches on the workflow filename
+# and the environment name. Renaming this file or the `release` environment
+# breaks publishing with an auth error rather than an obvious failure.
+on:
+  push:
+    tags:
+      - "*-keycardai-oauth"
+      - "*-keycardai-mcp"
+      - "*-keycardai-a2a"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      # Required for the OIDC token that is exchanged for a rubygems.org API key.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve the gem from the tag
+        id: gem
+        run: |
+          # changelog.py owns tag -> gem resolution, so adding a fourth gem
+          # needs no edit here. It reads .cz.toml only; commitizen itself is
+          # not needed for this.
+          INFO=$(python3 scripts/changelog.py package "${GITHUB_REF#refs/tags/}" --output-format github)
+          echo "$INFO"
+          echo "name=$(jq -r '.package_name' <<< "$INFO")" >> $GITHUB_OUTPUT
+          echo "dir=$(jq -r '.package_dir' <<< "$INFO")" >> $GITHUB_OUTPUT
+          echo "version=$(jq -r '.version' <<< "$INFO")" >> $GITHUB_OUTPUT
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          # The gemspec has no build-time dependencies, and Gemfile.lock is not
+          # committed, so there is nothing worth restoring here.
+          bundler-cache: false
+
+      - name: Check the tag against the gem version
+        working-directory: ${{ steps.gem.outputs.dir }}
+        env:
+          EXPECTED: ${{ steps.gem.outputs.version }}
+        run: |
+          # A publish cannot be taken back, so refuse a tag that disagrees with
+          # the version the gemspec would build.
+          ACTUAL=$(ruby -e 'puts Gem::Specification.load(Dir["*.gemspec"].first).version')
+          echo "tag says $EXPECTED, gemspec builds $ACTUAL"
+          if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+            echo "::error::Tag version $EXPECTED does not match gemspec version $ACTUAL"
+            exit 1
+          fi
+
+      - name: Build
+        working-directory: ${{ steps.gem.outputs.dir }}
+        run: gem build "${{ steps.gem.outputs.name }}.gemspec"
+
+      # Unlike uv publish and pnpm publish, gem push does not discover the OIDC
+      # token on its own, so the exchange is an explicit step. This is the same
+      # action rubygems/release-gem@v1 uses internally; release-gem itself is a
+      # poor fit here because it runs `bundle exec rake release`, which builds
+      # its own vX.Y.Z tag and pushes it, colliding with the tag scheme above.
+      - uses: rubygems/configure-rubygems-credentials@v2.1.0
+
+      - name: Publish to rubygems.org
+        working-directory: ${{ steps.gem.outputs.dir }}
+        run: gem push "${{ steps.gem.outputs.name }}-${{ steps.gem.outputs.version }}.gem"
+
+      - name: Wait for the release to be queryable
+        working-directory: ${{ steps.gem.outputs.dir }}
+        run: |
+          # Publishing is asynchronous on rubygems.org. Waiting keeps a green run
+          # from meaning "pushed but not yet installable", which matters because
+          # keycardai-mcp and keycardai-a2a depend on keycardai-oauth by version
+          # constraint (a gemspec cannot use a path source).
+          gem exec rubygems-await "${{ steps.gem.outputs.name }}-${{ steps.gem.outputs.version }}.gem"
