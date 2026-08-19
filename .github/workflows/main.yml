@@ -1,0 +1,71 @@
+name: Merge to Main
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      changed-gems: ${{ steps.changes.outputs.changed-gems }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # commitizen's tag walk needs full history to find each gem's last
+          # release.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install commitizen
+
+      - name: Detect gems with unreleased changes
+        id: changes
+        run: |
+          GEMS=$(python3 scripts/changelog.py changes --output-format github)
+          echo "Changed gems: $GEMS"
+          echo "changed-gems=$GEMS" >> $GITHUB_OUTPUT
+
+      # bump-gems is gated on the release app being configured, so without this
+      # the pipeline would sit skipped and silent, which is the failure mode
+      # this repo keeps getting bitten by.
+      - name: Warn when the release app is not configured
+        if: vars.SDK_RELEASE_APP_ID == '' && steps.changes.outputs.changed-gems != '[]'
+        run: |
+          echo "::warning::Gems have unreleased changes but vars.SDK_RELEASE_APP_ID is unset, so no bump will run. See ECO-291."
+
+  bump-gems:
+    # Conditions, in order: something to release; not itself a bump (a bump PR's
+    # squash subject starts with "bump:", and bumping in response to a bump never
+    # ends); and the release app is configured, since without it every run would
+    # fail at token generation.
+    if: >-
+      needs.detect-changes.outputs.changed-gems != '[]'
+      && !startsWith(github.event.head_commit.message, 'bump:')
+      && vars.SDK_RELEASE_APP_ID != ''
+    needs: detect-changes
+    permissions:
+      contents: write
+      pull-requests: write
+    strategy:
+      matrix:
+        gem: ${{ fromJson(needs.detect-changes.outputs.changed-gems) }}
+      # Serialise so two bumps cannot race for the same target-branch tip.
+      # This does not order the matrix; changelog.py emits gems in dependency
+      # order (oauth first) so a dependent gem is never published against a
+      # sibling version that is not live yet.
+      max-parallel: 1
+    uses: ./.github/workflows/bump-package.yml
+    with:
+      package_name: ${{ matrix.gem.package_name }}
+      package_dir: ${{ matrix.gem.package_dir }}
+      target_branch: ${{ github.ref_name }}
+    secrets: inherit

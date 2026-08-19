@@ -1,0 +1,631 @@
+#!/usr/bin/env python3
+"""Bump a gem's version via an auto-merging PR.
+
+Ported from python-sdk's post-fix pipeline. Compatible with branch-protection
+rulesets that require all changes to land through PRs and require commits to be
+signed:
+
+0. If the configured version already has a merged bump commit on the target
+   branch but no release tag (a prior run's merge-wait timed out before
+   tagging), the missing tag is pushed and the run stops. Re-running cz in that
+   state would double-bump.
+1. ``cz bump --files-only`` updates ``.cz.toml`` (the cz version field),
+   ``lib/keycardai/<gem>/version.rb`` and ``CHANGELOG.md`` in the gem
+   directory; no local commit or tag.
+2. A release-line-specific bump branch is created on the remote at the current
+   target-branch tip via the REST refs API.
+3. The bumped files are committed onto that branch via the GraphQL
+   ``createCommitOnBranch`` mutation, which GitHub signs as the app. No GPG key
+   is involved.
+4. A PR is opened with auto-merge armed. Once its checks are green the script
+   merges it directly: the release app is a ruleset bypass actor, and
+   auto-merge never exercises bypass, it only fires when every requirement
+   (including required reviews) is genuinely satisfied. Arming auto-merge and
+   waiting is what deadlocked python-sdk and typescript-sdk in July 2026.
+   Auto-merge stays armed as the fallback if the direct merge is refused.
+5. The script polls until the PR merges, captures the squash-merge SHA on the
+   target branch, then creates the ``<version>-<gem-name>`` tag at that SHA.
+   Tags trigger release.yml, which publishes to rubygems.org.
+
+The runner needs ``GH_TOKEN`` in env (the release app's installation token) and
+a repo with auto-merge enabled and squash merging available.
+"""
+
+import argparse
+import base64
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+
+def run_command(
+    cmd: list[str], cwd: str | None = None, env: dict | None = None
+) -> tuple[int, str, str]:
+    """Run a command and return exit code, stdout, and stderr."""
+    try:
+        merged_env = os.environ.copy()
+        if env:
+            merged_env.update(env)
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            check=False,
+            env=merged_env,
+        )
+        return result.returncode, result.stdout.strip(), result.stderr.strip()
+    except Exception as e:  # noqa: BLE001 - surfaced to the caller as a failure
+        return 1, "", str(e)
+
+
+def configure_git() -> None:
+    print("Configuring git...")
+    run_command(["git", "config", "--local", "user.email", "action@github.com"])
+    run_command(["git", "config", "--local", "user.name", "GitHub Action"])
+
+
+def get_repo_slug() -> str:
+    """Return ``owner/repo`` for the current checkout, e.g. ``keycardai/ruby-sdk``."""
+    exit_code, stdout, _ = run_command(
+        ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"]
+    )
+    if exit_code != 0 or not stdout:
+        print("Failed to determine repository slug from gh CLI")
+        sys.exit(1)
+    return stdout
+
+
+def get_branch_sha(branch: str) -> str:
+    """Return the current commit SHA on an origin branch."""
+    exit_code, stdout, stderr = run_command(["git", "rev-parse", f"origin/{branch}"])
+    if exit_code != 0:
+        print(f"Failed to read origin/{branch}: {stderr}")
+        sys.exit(1)
+    return stdout
+
+
+def pull_branch(branch: str) -> bool:
+    print(f"Pulling latest changes from origin/{branch}...")
+    exit_code, _, stderr = run_command(["git", "fetch", "origin", branch])
+    if exit_code != 0:
+        print(f"Failed to fetch origin/{branch}: {stderr}")
+        return False
+    exit_code, _, stderr = run_command(["git", "reset", "--hard", f"origin/{branch}"])
+    if exit_code != 0:
+        print(f"Failed to reset to origin/{branch}: {stderr}")
+        return False
+    return True
+
+
+def get_configured_version(package_dir: str) -> str | None:
+    """Return the version cz has recorded for the gem, or ``None``."""
+    exit_code, stdout, stderr = run_command(["cz", "version", "--project"], cwd=package_dir)
+    if exit_code != 0 or not stdout.strip():
+        print(f"Could not read configured version: {stderr}")
+        return None
+    return stdout.strip()
+
+
+def tag_exists_on_remote(tag: str) -> bool:
+    exit_code, stdout, _ = run_command(["git", "ls-remote", "--tags", "origin", f"refs/tags/{tag}"])
+    return exit_code == 0 and bool(stdout.strip())
+
+
+def recover_untagged_bump(repo: str, package_name: str, package_dir: str) -> bool | None:
+    """Push the missing release tag for a bump that merged without one.
+
+    A bump PR can merge after this job's merge-wait times out, leaving the
+    version files ahead of the last release tag with nothing to trigger the
+    publish. When the configured version has a merged bump commit on the target
+    branch but no tag, push the tag at that commit and stop. Re-running cz
+    instead produces a spurious double-bump PR.
+
+    Returns ``True`` when the missing tag was pushed (the bump is complete),
+    ``False`` when the tag push failed, and ``None`` when there is nothing to
+    recover and the normal bump flow should proceed.
+    """
+    version = get_configured_version(package_dir)
+    if version is None:
+        return None
+    tag = f"{version}-{package_name}"
+    if tag_exists_on_remote(tag):
+        return None
+
+    # Matches the headline create_signed_commit_on_branch writes, byte for byte,
+    # including the U+2192 arrow.
+    headline = f"bump: {package_name} → {version}"
+    exit_code, stdout, _ = run_command(
+        ["git", "log", "--fixed-strings", f"--grep={headline}", "--format=%H", "-1", "HEAD"]
+    )
+    sha = stdout.strip()
+    if exit_code != 0 or not sha:
+        return None
+
+    print(
+        f"Version {version} has a merged bump commit ({sha[:8]}) but no {tag} tag; "
+        "recovering the tag instead of bumping again."
+    )
+    if not create_and_push_tag(repo, tag, sha):
+        return False
+    print(f"Recovered: tag {tag} pushed.")
+    return True
+
+
+def cz_bump_files_only(
+    package_dir: str, package_name: str, increment: str | None = None
+) -> str | None:
+    """Run ``cz bump --files-only`` and return the new version string.
+
+    cz prints a line like ``bump: keycardai-a2a 0.2.0 → 0.3.0`` to stdout; we
+    parse that for the new version. Returns ``None`` if there is nothing to
+    bump.
+    """
+    print(f"Running cz bump --files-only for {package_name}...")
+    command = ["cz", "bump", "--changelog", "--yes", "--files-only"]
+    if increment:
+        command.extend(["--increment", increment.upper(), "--allow-no-commit"])
+    exit_code, stdout, stderr = run_command(command, cwd=package_dir)
+
+    if exit_code != 0:
+        if "NO_COMMITS_TO_BUMP" in stderr or "no eligible commits" in stderr.lower():
+            print("cz reports no eligible commits since last tag; nothing to bump.")
+            return None
+        print(f"cz bump failed (exit {exit_code}): {stderr}")
+        sys.exit(1)
+
+    print(stdout)
+
+    match = re.search(r"\b(\d+\.\d+\.\d+)\s*(?:→|->|to)\s*(\d+\.\d+\.\d+)", stdout)
+    if not match:
+        print(f"Could not parse new version from cz output: {stdout}")
+        sys.exit(1)
+    return match.group(2)
+
+
+def get_modified_files() -> list[str]:
+    """Return the files changed in the working tree, plus any cz created.
+
+    ``update_changelog_on_bump`` writes CHANGELOG.md, which is untracked the
+    first time a gem is bumped, so ``git diff`` alone would miss it.
+    """
+    exit_code, stdout, stderr = run_command(["git", "diff", "--name-only"])
+    if exit_code != 0:
+        print(f"Failed to list modified files: {stderr}")
+        sys.exit(1)
+    modified = [line for line in stdout.splitlines() if line]
+
+    exit_code, stdout, stderr = run_command(
+        ["git", "ls-files", "--others", "--exclude-standard"]
+    )
+    if exit_code != 0:
+        print(f"Failed to list untracked files: {stderr}")
+        sys.exit(1)
+    modified.extend(line for line in stdout.splitlines() if line)
+
+    return modified
+
+
+def bump_branch_name(target_branch: str, package_name: str, version: str) -> str:
+    """Return a release-line-specific bump branch name.
+
+    Namespacing by release line keeps a 1.x bump and a main bump of the same gem
+    from colliding on one branch ref.
+    """
+    release_line = re.sub(r"[^A-Za-z0-9._-]+", "-", target_branch)
+    return f"bump/{release_line}/{package_name}-{version}"
+
+
+def create_remote_branch(repo: str, branch: str, sha: str) -> bool:
+    print(f"Creating remote branch {branch} at {sha[:8]}...")
+    exit_code, _, stderr = run_command(
+        [
+            "gh",
+            "api",
+            f"repos/{repo}/git/refs",
+            "-X",
+            "POST",
+            "-f",
+            f"ref=refs/heads/{branch}",
+            "-f",
+            f"sha={sha}",
+        ]
+    )
+    if exit_code != 0:
+        print(f"Failed to create remote branch: {stderr}")
+        return False
+    return True
+
+
+def create_signed_commit_on_branch(
+    repo: str,
+    branch: str,
+    parent_sha: str,
+    files: list[str],
+    headline: str,
+    body: str,
+) -> bool:
+    """Submit a signed commit to ``branch`` via GraphQL ``createCommitOnBranch``.
+
+    Each file's current working-tree content is base64-encoded and sent as a
+    file addition. GitHub signs the commit as the authenticated app, so no GPG
+    key is needed to satisfy a signed-commits ruleset.
+    """
+    print(f"Creating signed commit on {branch} via GraphQL mutation...")
+
+    additions = []
+    for path in files:
+        content = Path(path).read_bytes()
+        additions.append(
+            {
+                "path": path,
+                "contents": base64.b64encode(content).decode("ascii"),
+            }
+        )
+
+    mutation = (
+        "mutation($input: CreateCommitOnBranchInput!) {"
+        "  createCommitOnBranch(input: $input) {"
+        "    commit { oid url }"
+        "  }"
+        "}"
+    )
+    request_body = {
+        "query": mutation,
+        "variables": {
+            "input": {
+                "branch": {"repositoryNameWithOwner": repo, "branchName": branch},
+                "expectedHeadOid": parent_sha,
+                "fileChanges": {"additions": additions},
+                "message": {"headline": headline, "body": body},
+            }
+        },
+    }
+
+    # gh api graphql --input <file> is the path that accepts a fully-formed
+    # request body. --raw-field variables=... does not preserve nested JSON.
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tmp:
+        json.dump(request_body, tmp)
+        tmp_path = tmp.name
+
+    try:
+        exit_code, stdout, stderr = run_command(["gh", "api", "graphql", "--input", tmp_path])
+    finally:
+        os.unlink(tmp_path)
+
+    if exit_code != 0:
+        print(f"GraphQL createCommitOnBranch failed: {stderr}")
+        return False
+
+    try:
+        payload = json.loads(stdout)
+        if "errors" in payload:
+            print(f"GraphQL returned errors: {payload['errors']}")
+            return False
+        oid = payload["data"]["createCommitOnBranch"]["commit"]["oid"]
+        print(f"Created signed commit {oid[:8]} on {branch}")
+    except (json.JSONDecodeError, KeyError) as e:
+        print(f"Unexpected GraphQL response shape: {stdout} ({e})")
+        return False
+    return True
+
+
+def wait_for_pr_stable(pr_number: int, timeout_seconds: int = 120) -> bool:
+    """Poll mergeStateStatus until GitHub has a definite state for the PR.
+
+    A freshly opened PR starts as UNKNOWN or UNSTABLE while required checks
+    register. Auto-merge can only be enabled once the PR leaves that limbo.
+    """
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        exit_code, stdout, _ = run_command(
+            ["gh", "pr", "view", str(pr_number), "--json", "mergeStateStatus"]
+        )
+        if exit_code == 0:
+            state = json.loads(stdout).get("mergeStateStatus", "")
+            print(f"PR #{pr_number} merge state: {state}")
+            if state not in ("UNKNOWN", "UNSTABLE"):
+                return True
+        time.sleep(5)
+    print(f"Timed out waiting for PR #{pr_number} to reach a stable merge state")
+    return False
+
+
+def create_pr_with_automerge(
+    branch: str, target_branch: str, package_name: str, new_version: str
+) -> int | None:
+    """Open a PR for the bump branch with auto-merge (squash) enabled.
+
+    Returns the PR number on success, ``None`` on failure.
+    """
+    title = f"bump: {package_name} → {new_version}"
+    pr_body = (
+        f"Auto-bump for `{package_name}` to `{new_version}`.\n\n"
+        "Generated by `scripts/bump_package.py`. The release tag is created at "
+        "the squash-merge SHA after this PR merges, which triggers the publish "
+        "workflow."
+    )
+
+    print(f"Opening PR for {branch}...")
+    exit_code, stdout, stderr = run_command(
+        [
+            "gh",
+            "pr",
+            "create",
+            "--head",
+            branch,
+            "--base",
+            target_branch,
+            "--title",
+            title,
+            "--body",
+            pr_body,
+        ]
+    )
+    if exit_code != 0:
+        print(f"Failed to create PR: {stderr}")
+        return None
+
+    pr_url = stdout.strip().splitlines()[-1]
+    pr_number_match = re.search(r"/pull/(\d+)", pr_url)
+    if not pr_number_match:
+        print(f"Could not parse PR number from gh output: {pr_url}")
+        return None
+    pr_number = int(pr_number_match.group(1))
+    print(f"Opened PR #{pr_number}: {pr_url}")
+
+    if not wait_for_pr_stable(pr_number):
+        return None
+
+    print("Enabling auto-merge (squash) as a fallback...")
+    exit_code, _, stderr = run_command(["gh", "pr", "merge", str(pr_number), "--auto", "--squash"])
+    if exit_code != 0:
+        print(f"Failed to enable auto-merge: {stderr}")
+        return None
+    return pr_number
+
+
+def checks_green(pr_data: dict) -> bool:
+    """True when every check in the PR's status rollup has finished cleanly.
+
+    An empty rollup counts as green (no required checks registered).
+    """
+    ok_conclusions = {"SUCCESS", "NEUTRAL", "SKIPPED"}
+    for check in pr_data.get("statusCheckRollup") or []:
+        status = (check.get("status") or "").upper()
+        conclusion = (check.get("conclusion") or "").upper()
+        if status and status != "COMPLETED":
+            return False
+        if conclusion and conclusion not in ok_conclusions:
+            return False
+        if not status and not conclusion:
+            return False
+    return True
+
+
+def wait_for_pr_merge(
+    repo: str,
+    pr_number: int,
+    target_branch: str,
+    timeout_seconds: int = 1800,
+) -> str | None:
+    """Poll the PR until it merges. Returns the merge commit SHA on the target branch.
+
+    Fails if the PR is closed without merging or if the timeout elapses. Polls
+    every 30s; logs each status change so the run is debuggable.
+    """
+    print(f"Waiting for PR #{pr_number} to merge (timeout {timeout_seconds}s)...")
+    deadline = time.time() + timeout_seconds
+    last_state = None
+    direct_merge_attempts = 0
+
+    while time.time() < deadline:
+        exit_code, stdout, stderr = run_command(
+            [
+                "gh",
+                "pr",
+                "view",
+                str(pr_number),
+                "--json",
+                "state,mergeCommit,statusCheckRollup,headRefOid",
+            ]
+        )
+        if exit_code != 0:
+            print(f"Failed to read PR status: {stderr}")
+            time.sleep(30)
+            continue
+
+        try:
+            data = json.loads(stdout)
+        except json.JSONDecodeError:
+            print(f"Could not parse PR status JSON: {stdout}")
+            time.sleep(30)
+            continue
+
+        state = data.get("state")
+        if state != last_state:
+            print(f"PR #{pr_number} state: {state}")
+            last_state = state
+
+        if state == "MERGED":
+            merge_commit = data.get("mergeCommit") or {}
+            sha = merge_commit.get("oid")
+            if not sha:
+                print("PR is MERGED but no mergeCommit oid was returned.")
+                return None
+            print(f"PR #{pr_number} merged at {sha[:8]}")
+            return sha
+
+        if state == "CLOSED":
+            print(f"PR #{pr_number} was closed without merging.")
+            return None
+
+        if state == "OPEN" and direct_merge_attempts < 3 and checks_green(data):
+            # Auto-merge waits for requirements the app is entitled to bypass
+            # (required reviews), and the merge API does not exercise ruleset
+            # bypass either; ref updates do. Try the merge for the clean PR
+            # timeline, then fall back to fast-forwarding the target branch to
+            # the PR head, which GitHub records as merging the PR.
+            direct_merge_attempts += 1
+            exit_code, _, stderr = run_command(["gh", "pr", "merge", str(pr_number), "--squash"])
+            if exit_code == 0:
+                print(f"Merged PR #{pr_number} directly as the bypass actor.")
+            else:
+                print(f"Direct merge refused: {stderr.strip()[:200]}")
+                head_sha = data.get("headRefOid")
+                if head_sha:
+                    exit_code, _, stderr = run_command(
+                        [
+                            "gh",
+                            "api",
+                            "-X",
+                            "PATCH",
+                            f"repos/{repo}/git/refs/heads/{target_branch}",
+                            "-f",
+                            f"sha={head_sha}",
+                        ]
+                    )
+                    if exit_code == 0:
+                        print(
+                            f"Fast-forwarded {target_branch} to {head_sha[:8]}; "
+                            f"PR #{pr_number} will be marked merged."
+                        )
+                    else:
+                        print(
+                            f"Fast-forward attempt {direct_merge_attempts} failed "
+                            f"({target_branch} may have moved); auto-merge stays armed: "
+                            f"{stderr.strip()[:200]}"
+                        )
+
+        time.sleep(30)
+
+    print(f"Timeout waiting for PR #{pr_number} to merge.")
+    return None
+
+
+def create_and_push_tag(repo: str, tag: str, sha: str) -> bool:
+    """Create the tag on the remote pointing at ``sha``.
+
+    Uses the REST refs API rather than ``git push --tags`` so the operation
+    works even if the runner's local branch is behind (the job does not re-fetch
+    after the merge poll).
+    """
+    print(f"Creating tag {tag} at {sha[:8]} via REST refs API...")
+    exit_code, _, stderr = run_command(
+        [
+            "gh",
+            "api",
+            f"repos/{repo}/git/refs",
+            "-X",
+            "POST",
+            "-f",
+            f"ref=refs/tags/{tag}",
+            "-f",
+            f"sha={sha}",
+        ]
+    )
+    if exit_code != 0:
+        print(f"Failed to create tag: {stderr}")
+        return False
+    print(f"Created tag {tag}")
+    return True
+
+
+def bump_package(
+    package_name: str,
+    package_dir: str,
+    target_branch: str = "main",
+    increment: str | None = None,
+) -> bool:
+    print(f"Starting version bump for {package_name} on {target_branch}...")
+
+    if not Path(package_dir).exists():
+        print(f"Error: gem directory {package_dir} does not exist")
+        return False
+
+    configure_git()
+
+    if not pull_branch(target_branch):
+        return False
+
+    repo = get_repo_slug()
+
+    recovery = recover_untagged_bump(repo, package_name, package_dir)
+    if recovery is not None:
+        return recovery
+
+    new_version = cz_bump_files_only(package_dir, package_name, increment)
+    if new_version is None:
+        return True
+    branch = bump_branch_name(target_branch, package_name, new_version)
+    tag = f"{new_version}-{package_name}"
+    parent_sha = get_branch_sha(target_branch)
+
+    modified = get_modified_files()
+    if not modified:
+        print("cz bump produced no file changes; nothing to commit.")
+        return False
+    print(f"Modified files: {modified}")
+
+    if not create_remote_branch(repo, branch, parent_sha):
+        return False
+
+    if not create_signed_commit_on_branch(
+        repo,
+        branch,
+        parent_sha,
+        modified,
+        headline=f"bump: {package_name} → {new_version}",
+        body=f"Auto-bump for {package_name}.",
+    ):
+        return False
+
+    pr_number = create_pr_with_automerge(branch, target_branch, package_name, new_version)
+    if pr_number is None:
+        return False
+
+    merge_sha = wait_for_pr_merge(repo, pr_number, target_branch)
+    if merge_sha is None:
+        return False
+
+    if not create_and_push_tag(repo, tag, merge_sha):
+        return False
+
+    print(f"Successfully bumped {package_name} to {new_version}; tag {tag} pushed.")
+    return True
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Bump a gem version via an auto-merging PR.")
+    parser.add_argument("package_name", help="Gem name (e.g. keycardai-oauth).")
+    parser.add_argument("package_dir", help="Gem directory (e.g. oauth).")
+    parser.add_argument(
+        "--target-branch",
+        default="main",
+        help="Branch that receives the bump PR and the release tag.",
+    )
+    parser.add_argument(
+        "--increment",
+        choices=["major", "minor", "patch"],
+        help="Force the version increment instead of deriving it from commits.",
+    )
+    args = parser.parse_args()
+
+    if not bump_package(
+        args.package_name,
+        args.package_dir,
+        target_branch=args.target_branch,
+        increment=args.increment,
+    ):
+        print("Version bump failed")
+        sys.exit(1)
+    print("Version bump completed successfully")
+
+
+if __name__ == "__main__":
+    main()
