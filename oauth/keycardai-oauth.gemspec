@@ -19,7 +19,7 @@ Gem::Specification.new do |spec|
   spec.metadata["rubygems_mfa_required"] = "true"
   spec.metadata["source_code_uri"] = "https://github.com/keycardai/ruby-sdk/tree/main/oauth"
 
-  spec.files = Dir["lib/**/*.rb", "README.md", "LICENSE"]
+  spec.files = Dir["lib/**/*.rb", "CHANGELOG.md", "README.md", "LICENSE"]
   spec.require_paths = ["lib"]
 
   spec.add_dependency "jwt", ">= 2.7"
