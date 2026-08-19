@@ -10,7 +10,7 @@ reproducible with the commands in the last section.
 | --- | --- |
 | Gems | `keycardai-oauth`, `keycardai-mcp`, `keycardai-a2a` |
 | Capability specs covered | 18 of 20 testable, 2 excluded on purpose |
-| Conformance examples | 158 (plus 6 load/sanity checks, 164 total) |
+| Conformance examples | 160 (plus 6 load/sanity checks, 166 total) |
 | Live-zone integration rows | 12 of 12 passing against a real zone |
 | A2A delegation checks | 11 of 11 hermetic, plus a live run |
 | MCP server end-to-end checks | 8 of 8 hermetic, against the official `mcp` gem |
@@ -47,7 +47,7 @@ which are labelled without a row number.
 
 | Spec | Suite | Examples |
 | --- | --- | --- |
-| `server-bearer-auth/bearer-token-verification-middleware` | `bearer_token_verification_middleware_spec.rb` | 8 |
+| `server-bearer-auth/bearer-token-verification-middleware` | `bearer_token_verification_middleware_spec.rb` | 10 |
 | `server-bearer-auth/oauth-metadata-endpoints` | `oauth_metadata_endpoints_spec.rb` | 8 |
 | `server-bearer-auth/route-level-auth-gating` | `route_level_auth_gating_spec.rb` | 5 |
 | `delegated-access/grant-decorator` | `grant_decorator_spec.rb` | 5 |
@@ -149,7 +149,7 @@ contract.
 
 ```sh
 bundle install
-bundle exec rake                      # 164 examples + RuboCop
+bundle exec rake                      # 166 examples + RuboCop
 
 cd examples/mcp-server
 bin/selftest                          # 8 checks, no zone needed

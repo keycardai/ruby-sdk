@@ -4,13 +4,47 @@ module Keycardai
   module OAuth
     # A verified bearer token: the raw compact JWT plus its verified claims,
     # with convenience accessors for the RFC 9068 profile.
+    #
+    # Four accessors answer distinct questions about the caller, and picking
+    # the wrong one is a real bug rather than a style choice:
+    #
+    # - #client_id is the OAuth client that authenticated, so it names the
+    #   credential. It rotates, so it does not stably identify an application.
+    # - #keycard_app_id is the stable Keycard application identifier. Key on
+    #   this to answer "which application is calling", whatever the grant type
+    #   or credential. For user agents it equals #client_id.
+    # - #subject is the user identifier on a user-present token and the
+    #   application identifier on an application token.
+    # - #subject_profile distinguishes those two cases directly, rather than
+    #   leaving a consumer to infer it from #subject against #client_id.
+    #
+    # #subject and #client_id are RFC 9068. The other two are Keycard claims
+    # and are absent from a non-Keycard token, so they return nil there.
     AccessToken = Data.define(:token, :claims) do
-      # @return [String] the token's subject
+      # @return [String] the token's subject: the user for a user-present
+      #   token, the application for an application token
       def subject
         claims["sub"]
       end
 
-      # @return [String]
+      # Whether a user authorized this access or an application is acting on
+      # its own behalf. Reads the Keycard `sub_profile` claim.
+      #
+      # @return ["user", "app", nil] nil on a non-Keycard token
+      def subject_profile
+        claims["sub_profile"]
+      end
+
+      # The stable Keycard application identifier, which is the claim to key
+      # on when identifying the calling application.
+      #
+      # @return [String, nil] nil on a non-Keycard token
+      def keycard_app_id
+        claims["keycard_app_id"]
+      end
+
+      # @return [String] the OAuth client that authenticated, meaning the
+      #   credential rather than the application
       def client_id
         claims["client_id"]
       end
