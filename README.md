@@ -57,9 +57,13 @@ Design decisions and the Ruby idiom profile are in
 the spec, including live-zone results and findings raised upstream, is in
 [docs/conformance-report.md](docs/conformance-report.md).
 
-## Commits
+## Commits and releases
 
 Conventional commits with the **full gem name** as scope, matching the sibling
-SDKs: `feat(keycardai-oauth): ...`, not `feat(oauth): ...`. Release automation
-(when it lands) keys changelogs off the full-name scope; short scopes silently
-produce no release.
+SDKs: `feat(keycardai-oauth): ...`, not `feat(oauth): ...`. That scope is what
+decides which gem releases, so a short scope silently produces no release.
+Squash merges mean the PR title is what carries it.
+
+How a change becomes a published gem, what the repo settings and trusted
+publishers have to be, and what to do when a release goes sideways are in
+[docs/releasing.md](docs/releasing.md).

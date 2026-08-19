@@ -61,6 +61,11 @@ contents:write and pull-requests:write. Note go-sdk still uses the older
 
 ## 2. Release automation [ECO-282]
 
+Built in #18, #19, #20 and #21. [releasing.md](releasing.md) is the operational
+version of this section; what follows is the reasoning behind it, and two of the
+details below did not survive contact (RubyGems prerelease versions, and
+`rubygems/release-gem@v1`).
+
 Copy the **post-fix** python-sdk pipeline. The original deadlocked; the fixes
 landed in python-sdk#194 and typescript-sdk#122. Trigger is a push to `main`,
 not a manual dispatch: `main.yml` detects changed packages and fans out to
