@@ -146,16 +146,22 @@ client IDs in tracked files; only placeholder `keycard.cloud` strings; no
 secrets or `.env` in the index), and each gem now ships its LICENSE (#16, which
 caught all three gems declaring MIT while packaging no license text).
 
+- The four **"Private preview / not published"** notices are replaced with a
+  preview notice, and the root README's `path:`/`git:` instructions with
+  `bundle add`. The gem READMEs use absolute URLs, since they render on
+  rubygems.org where relative links do not resolve.
+- Each gem carries a hand-written `CHANGELOG.md` for 0.1.0, because the
+  baseline-tag path publishes without running a bump and so generates none.
+  Commitizen appends from 0.2.0 onward.
+
 Still to do:
 
-1. Replace the four **"Private preview / not published"** notices, which become
-   false on publish, in `README.md`, `oauth/README.md`, `mcp/README.md` and
-   `a2a/README.md`, with the sibling wording adapted: `> **Preview.** APIs may
-   change between minor versions while the surface settles. Conformance against
-   the cross-SDK contract is tracked in docs/conformance-report.md.`
-2. Replace the root README's `path:`/`git:` install instructions with
-   `gem install` / `bundle add`.
-3. Flip visibility to public and confirm CI is green in public.
+1. Flip visibility to public and confirm CI is green in public.
+
+**Do this before the first publish, not after.** A gem's README is its
+rubygems.org landing page, so publishing while the notices were stale would
+have made "not published to rubygems.org" the first line a consumer read, and
+`homepage` / `source_code_uri` would 404 for anyone outside the org.
 
 ## 4. Re-govern the repo like the other SDKs (no ticket)
 
