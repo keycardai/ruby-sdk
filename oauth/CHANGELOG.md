@@ -14,3 +14,144 @@ dynamic client registration (RFC 7591), authorization code with PKCE including
 the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
+
+## 0.2.0-keycardai-oauth (2026-08-19)
+
+
+- feat(keycardai-oauth): expose the caller identity claims on the auth context (#24)
+- Implements keycard-sdk-spec#44, which pins the auth-context identity
+field set so the SDKs converge instead of each guessing.
+- AccessToken gains subject_profile (the sub_profile claim) and
+keycard_app_id, alongside the existing subject and client_id. The four
+answer different questions and picking the wrong one is a bug, so the
+class doc says which to key on: keycard_app_id is the stable
+application identifier, client_id names the credential and rotates,
+subject is the user on a user-present token and the application on an
+application token, and subject_profile distinguishes those two directly
+rather than leaving a consumer to infer it.
+- Both Keycard claims are absent from a non-Keycard token, so they return
+nil rather than raising, which the spec calls out as optional.
+- Named subject_profile rather than sub_profile for consistency with the
+existing subject accessor, which already reads sub. The spec treats
+casing and naming as expression, and Go reads sub as Subject.
+- Conformance row 4 in the bearer-middleware table now asserts the
+identity fields, plus an application-token case where subject equals
+keycard_app_id and a non-Keycard case where both are nil.
+
+## 0.1.0-keycardai-oauth (2026-08-19)
+
+
+- feat(keycardai-oauth): authenticate loopback flow and challenge-driven entry (#7)
+- Completes specs/oauth-client/authorization-code-pkce.md with the
+high-level convenience layer:
+- - authenticate: PKCE pair + CSRF state, authorize URL, shell-free
+  browser launch (open / xdg-open / cmd start), single-shot loopback
+  callback server (RFC 8252, converged defaults: port 8765, 300s
+  timeout, verifier length 128; port 0 binds ephemeral), state
+  validation (state_mismatch), redirect-carried OAuth errors typed,
+  InteractionTimeoutError on user inaction, then the code exchange
+- resolve_issuer_from_challenge: RFC 9728 WWW-Authenticate
+  resource_metadata fetch to the first authorization server
+- authenticate_from_challenge: challenge-driven entry to the same flow
+- Tested against a real loopback server with a fake browser driving the
+redirect (round trip, forged state, denied authorization, timeout).
+- feat(keycardai-oauth): AccessContext, exchange orchestration, TokenVerifier, multi-zone (#6)
+- Implements specs/delegated-access/access-context.md and
+specs/multi-zone-and-ops/multi-zone-support.md, completing the oauth
+core surface:
+- - AccessContext: throwing access(resource) with typed
+  ResourceAccessError (global_error / resource_error / missing_token,
+  available_resources carried), non-throwing getters, status, mutators
+  for the grant layer, thread-safe, merge
+- exchange_tokens_for_resources: non-throwing orchestration feeding an
+  AccessContext; per-resource scopes; impersonation path when
+  user_identifier is given
+- TokenVerifier (server tier): JWTVerifier over a shared JWKSKeyring
+  returning AccessToken; verify_token_for_zone pins one zone issuer and
+  fails closed on unconfigured zones; caches keyed by issuer so no
+  cross-zone leakage
+- TokenExchangeClient/ClientCredentialsClient accept an application
+  credential (exclusive with the raw pair, which now wraps into
+  ClientSecret) and a per-call issuer; token-endpoint cache is keyed by
+  issuer; credential-prepared params merge under caller overrides
+- Conformance suites cover the full 16-row AccessContext table and the
+6-row multi-zone table, plus orchestration coverage.
+- feat(keycardai-oauth): application credentials (ClientSecret, WebIdentity, WorkloadIdentity) (#5)
+- Implements specs/application-credentials/{client-secret,web-identity,
+workload-identity}.md. The Credential interface is two methods:
+authorization_header(issuer:) and prepare_token_exchange_request.
+- - ClientSecret: client_secret_basic only; single pair or issuer-keyed
+  multi-zone map; construction rejects empty ids/secrets/maps; unknown
+  zones fail closed by raising (Python shape), never falling back
+- PrivateKeyManager + FilePrivateKeyStorage: RSA-2048 generate/persist/
+  load (./server_keys default, ./mcp_keys legacy fallback), RFC 7523
+  create_client_assertion (iss=sub=client_id, aud=token_endpoint, jti,
+  iat, exp=iat+300), public JWKS export
+- WebIdentity: key-id resolution (explicit, sanitized server_name,
+  UUID), lazy key bootstrap, fresh assertion per request, no Basic
+  header, public_jwks + client_jwks_url accessors
+- WorkloadIdentity: pluggable IdentityTokenSource (bare callables
+  adapted), token fetched fresh every request, optional client_id form
+  param (KEP 108), typed WorkloadIdentity{Configuration,Runtime}Error
+  with source ids and cause chaining
+- Token sources: FileTokenSource (the one blessed env read: 4-var
+  discovery list at exact cross-SDK parity, construction-time
+  validation), GCPMetadataTokenSource, FlyTokenSource (raw HTTP over
+  the Fly Unix socket)
+- No deprecated EKS alias: Ruby is new and ships none; FileTokenSource
+covers the EKS contract. Conformance suites map to all three spec
+Testing tables (workload-identity row 10 n/a per the above).
+- feat(keycardai-oauth): DCR, PKCE primitives, authorize URL, code exchange (#4)
+- Implements specs/oauth-client/dynamic-client-registration.md and the
+primitive + building-block layers of
+specs/oauth-client/authorization-code-pkce.md:
+- - register_client: RFC 7591 registration with RFC-minimal request
+  (only caller-supplied fields), additional_metadata bag with named
+  fields winning, initial_access_token Bearer auth, typed RFC 7591
+  3.2.2 error parsing, client_id required in the response
+- PKCE module: verifier generation (43-128, unreserved charset, 128
+  default), S256/plain challenge derivation, generate_pair
+- build_authorize_url: response_type=code plus PKCE, scope, state,
+  resource parameters
+- exchange_authorization_code: public clients send client_id in the
+  body, confidential clients use HTTP Basic and omit it
+- HTTP transport gains post_json; token-response parsing extracted to
+  TokenRequests module functions shared by the standalone exchange
+- The high-level authenticate loopback flow (browser + callback server +
+state validation) is the next slice; the spec unit tables do not cover
+it. Conformance specs map one to one to both spec Testing tables.
+- feat(keycardai-oauth): discovery, client credentials, token exchange, impersonation (#3)
+- Implements specs/oauth-client/{authorization-server-discovery,
+client-credentials,token-exchange}.md and
+specs/delegated-access/impersonation.md:
+- - fetch_authorization_server_metadata: RFC 8414 discovery with issuer
+  validation (issuer_mismatch), typed protocol errors, unknown fields
+  preserved; JWKSKeyring now discovers through this operation
+- TokenResponse: shared token shape (scope parsed to array, Bearer
+  default, id_token, raw preserved), rejects a missing access_token
+- TokenExchangeClient: RFC 8693 exchange with defaults, actor tokens,
+  client_assertion pass-through, Basic client auth, lazy cached token
+  endpoint, RFC 6749 5.2 typed OAuthError parsing
+- impersonate: substitute-user exchange (vnd.kc.su+jwt unsigned subject
+  token, no actor_token, resource required client-side)
+- ClientCredentialsClient: RFC 6749 4.4 grant on the same machinery
+- Conformance specs map one to one to all four spec Testing tables.
+- feat(keycardai-oauth): JWT/JWKS layer with conformance suites (#2)
+- Implements specs/jwt-jwks/jwks-caching.md and
+specs/jwt-jwks/jwt-signing-and-verification.md plus the shared
+foundations they need:
+- - Error taxonomy rooted at Keycardai::Error (configuration, network,
+  HTTP, invalid-token, JWKS quartet)
+- Pluggable HTTP transport with a Net::HTTP default; no hidden retries
+- JWKSKeyring: (issuer, kid) resolution with discovery + key TTLs,
+  same-origin jwks_uri enforcement, bounded cache with oldest-entry
+  eviction, per-issuer in-flight de-duplication
+- JWTSigner: RS256, header {alg, kid}, default iss only when omitted,
+  temporal claims caller-managed
+- JWTVerifier: fail-closed RFC 9068 verification, policy checks before
+  key resolution, trusted-issuer allowlist, kid required, alg allowlist
+  with none always rejected, clock_skew default 0 (exact comparison,
+  the canonical behavior per the spec Divergences; the types-table 60s
+  default looks stale and will be raised upstream)
+- Conformance specs map one to one to the spec Testing tables; the two
+live-zone integration rows are deferred to the E2E phase.

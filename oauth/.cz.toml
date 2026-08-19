@@ -1,6 +1,6 @@
 [tool.commitizen]
 name = "cz_customize"
-version = "0.1.0"
+version = "0.2.0"
 # RubyGems prerelease syntax ("0.1.0.pre") is not a version scheme commitizen
 # understands. It parses that as PEP 440, renders it back as "0.1.0-rc0", then
 # fails to find that string in version.rb and leaves the file untouched while
