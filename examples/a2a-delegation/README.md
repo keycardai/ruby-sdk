@@ -54,10 +54,12 @@ curl -X POST localhost:9602/delegate -H "authorization: Bearer <user-token>" \
 Agent A prefers an inbound `Authorization` bearer token and exchanges it,
 which is the real delegation path and what `bin/selftest` proves end to end.
 With no inbound user it falls back to impersonating a configured user directly
-for B, which is what `bin/live` exercises: a live Keycard zone will not
-re-exchange a substitute-user token, so an impersonated token cannot itself be
-delegated onward. That refusal is a deliberate anti-laundering property and is
-pinned as a test in the SDK's own live suite.
+for B, which is what `bin/live` exercises. That fallback exists because the
+exchange leg cannot run in the E2E zone: re-exchanging a zone-issued access
+token requires the calling client to own the resource named in the token's
+`aud`, and the zone's resources carry no `application_id`, so every re-exchange
+is refused with `invalid_grant`. It is a property of the provisioning, not of
+impersonation.
 
 One known gap, tracked upstream and owned by another team: the spec expects
 the authorization server to record the calling agent in the issued token's

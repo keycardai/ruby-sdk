@@ -74,7 +74,7 @@ rows against a real Keycard zone. Objects are provisioned by
 | token-exchange | 2: a malformed subject token is rejected | pass |
 | token-exchange | 3: an unregistered resource is rejected | pass |
 | impersonation | 1: impersonate a user; `sub` is the target | pass |
-| impersonation | invariant: an impersonated token is not re-exchangeable | pass |
+| token-exchange | a token whose aud resource has no owning application is not re-exchangeable | pass |
 | jwt-signing-and-verification | 2: verify a real zone token, second verify cached | pass |
 | bearer-token-verification-middleware | 1: a real token through the Rack middleware | pass |
 | access-context | 1: multi-resource grant populates an AccessContext | pass |
@@ -102,15 +102,21 @@ Ruby-specific.
    nothing else. Owned by another team. The Ruby suites assert `sub` and report
    `act` rather than asserting it; the hermetic stub zone does emit `act`, so
    the contract's intent stays covered.
-2. **`token-exchange.md` error codes do not match a live zone.** The spec lists
-   `invalid_grant` for a rejected subject token and `invalid_target` for an
-   unregistered resource. The zone returns `invalid_request` for a malformed
-   subject token and `invalid_grant` for an unregistered resource.
-3. **A security invariant is unspecified.** A zone refuses a substitute-user
-   token as the subject of a further exchange, which prevents an impersonated
-   token being laundered into a broader one. This is good behaviour and worth
-   writing into `impersonation.md`, since nothing currently records it and an
-   SDK could reasonably assume onward delegation works.
+2. **Re-exchange requires the calling client to own the `aud` resource, and
+   nothing specifies it.** `svc-sts` compares `resource.application_id` against
+   the authenticated client before accepting a zone-issued access token as a
+   `subject_token`, and rejects a mismatch with `invalid_grant` ("Client is not
+   allowed to exchange token for this resource"). Its own comment calls this "a
+   structural invariant (not a policy decision)". No spec mentions it, and it
+   governs whether onward delegation works at all, so an SDK author has no way
+   to predict it. Belongs in `token-exchange.md`.
+
+   Two earlier readings of this behaviour were wrong and are retracted. It is
+   not an error-code mismatch: a zone does emit `invalid_target` for an
+   unregistered target resource, exactly as the spec says, verified directly.
+   And it is not an impersonation-specific anti-laundering rule: the check
+   applies to every zone-issued access token, and the substitute-user token type
+   is the unsigned *input* to impersonation, never something a zone issues.
 
 Two spec-internal inconsistencies also surfaced while implementing
 `jwt-signing-and-verification.md`, both resolved by following the Divergences
@@ -130,8 +136,10 @@ on. Ruby implements zero skew and the full claim set.
 | `framework-integrations/*` | Governance documents rather than generatable contracts. The Rack integration is judged against the FRAMEWORK-INTEGRATIONS.md checklist instead. |
 
 One capability is implemented but not yet proven live: the production `grant`
-path exchanges a real inbound user token, and since impersonated tokens cannot
-be re-exchanged, the live suite cannot stand in for it. It is covered
+path exchanges a real inbound user token, and no token minted in the E2E zone
+can be re-exchanged while its resources carry no `application_id`, so the live
+suite cannot stand in for it yet. Fixing the provisioning is the prerequisite,
+not the browser login. It is covered
 hermetically end to end in both selftests; closing it live needs one
 interactive browser login.
 
