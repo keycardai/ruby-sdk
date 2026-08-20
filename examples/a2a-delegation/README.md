@@ -54,11 +54,16 @@ curl -X POST localhost:9602/delegate -H "authorization: Bearer <user-token>" \
 Agent A prefers an inbound `Authorization` bearer token and exchanges it,
 which is the real delegation path and what `bin/selftest` proves end to end.
 With no inbound user it falls back to impersonating a configured user directly
-for B, which is what `bin/live` exercises. Either way the exchange leg needs
-the calling client to own the resource named in the subject token's `aud`:
-`svc-sts` gates re-exchange on `resource.application_id`, so a zone whose
-resources have no owner refuses every exchange with `invalid_grant` while
-impersonation keeps working. `bin/provision` sets that field.
+for B, which is what `bin/live` exercises, since that harness sends no inbound
+bearer token of its own.
+
+The exchange path, whichever token feeds it, needs the calling client to own
+the resource named in the subject token's `aud`: `svc-sts` gates re-exchange on
+`resource.application_id`, so a zone whose resources have no owner refuses
+every exchange with `invalid_grant` while impersonation keeps working, which
+reads like a token problem rather than a provisioning one. `bin/live` sets the
+field on the Agent B resource it registers, and `../mcp-server/bin/provision`
+sets it on the rest.
 
 One known gap, tracked upstream and owned by another team: the spec expects
 the authorization server to record the calling agent in the issued token's

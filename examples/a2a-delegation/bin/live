@@ -48,15 +48,25 @@ puts "zone: #{api("/zones/{zone}")["name"]} (#{ZONE})"
 # Agent B must be a registered resource for the zone to mint tokens for it.
 sts = api("/zones/{zone}/providers").fetch("items", []).find { |p| p["type"] == "keycard-sts" }
 abort "no keycard-sts provider in zone" unless sts
+app = api("/zones/{zone}/applications?identifier=urn:app:ruby-sdk-e2e").fetch("items", []).first
+abort "application urn:app:ruby-sdk-e2e not found; run ../mcp-server/bin/provision" unless app
+
+# application_id is what lets agent A exchange an inbound token for agent B.
+# svc-sts compares it against the authenticated client before accepting a
+# zone-issued token as a subject_token, so without it the exchange leg fails
+# with invalid_grant and only the impersonation fallback runs.
 existing = api("/zones/{zone}/resources?identifier=#{AGENT_B_URL}").fetch("items", []).first
 resource = existing || api("/zones/{zone}/resources", method: "POST", body: JSON.dump(
   { "name" => "Agent B", "identifier" => AGENT_B_URL,
-    "credential_provider_id" => sts["id"], "scopes_supported" => ["a2a"] },
+    "credential_provider_id" => sts["id"], "scopes_supported" => ["a2a"],
+    "application_id" => app["id"] },
 ))
+if existing
+  api("/zones/{zone}/resources/#{resource["id"]}", method: "PATCH",
+      body: JSON.dump({ "application_id" => app["id"] }))
+end
 puts "  agent B resource: #{resource["id"]}#{existing ? " (already present)" : " (created)"}"
 
-app = api("/zones/{zone}/applications?identifier=urn:app:ruby-sdk-e2e").fetch("items", []).first
-abort "application urn:app:ruby-sdk-e2e not found; run ../mcp-server/bin/provision" unless app
 api("/zones/{zone}/applications/#{app["id"]}/dependencies/#{resource["id"]}", method: "PUT")
 puts "  app -> agent B dependency ensured"
 
