@@ -48,14 +48,26 @@ else
 fi
 
 # Resources, both STS-backed. The first must match what the server advertises.
+#
+# application_id is load-bearing and easy to miss. svc-sts will only accept a
+# zone-issued access token as the subject of a further exchange if the calling
+# client owns the resource named in that token's `aud`, and ownership is this
+# field. Leave it unset and every re-exchange fails with invalid_grant
+# ("Client is not allowed to exchange token for this resource"), which takes
+# the whole grant path down while impersonation still works, so it reads like
+# a token problem rather than a provisioning one. Dependencies do not stand in
+# for it: they let the application request tokens, not own the resource.
 ensure_resource() {
   local identifier="$1" name="$2" scope="$3" id
   id=$(k "/zones/{zone}/resources?identifier=$identifier" | first_id)
   if [ -z "$id" ]; then
     id=$(k '/zones/{zone}/resources' -X POST \
-      -d "{\"name\":\"$name\",\"identifier\":\"$identifier\",\"credential_provider_id\":\"$STS\",\"scopes_supported\":[\"$scope\"]}" | jget id)
+      -d "{\"name\":\"$name\",\"identifier\":\"$identifier\",\"credential_provider_id\":\"$STS\",\"scopes_supported\":[\"$scope\"],\"application_id\":\"$APP\"}" | jget id)
     echo "  resource created: $identifier -> $id" >&2
   else
+    # Backfill: a zone provisioned before application_id was set here still
+    # has it unset, and PATCH is idempotent.
+    k "/zones/{zone}/resources/$id" -X PATCH -d "{\"application_id\":\"$APP\"}" >/dev/null
     echo "  resource already present: $identifier -> $id" >&2
   fi
   # Dependencies are what let the application obtain tokens for the resource.

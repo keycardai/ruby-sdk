@@ -221,12 +221,16 @@ mode; and the `workflow_dispatch` single-template branch falls through to
 Blocked on step 5, since templates CI installs from the registry with no
 path-override.
 
-## 9. Close the last coverage gap (no ticket)
+## 9. Close the last coverage gap (DONE)
 
-The production `grant` path exchanges a real inbound user token. No token
-minted in the E2E zone can be re-exchanged while its resources carry no
-`application_id`, so the live suite cannot stand in for it and a browser login
-alone would not close it either: the inbound user token hits the same
-ownership check. Fix the provisioning first, then the gap may close with
-impersonation and no interactive login at all. Covered hermetically in both
-example selftests.
+Closed without the interactive browser login this step assumed it needed. The
+production `grant` path is a live row now: an inbound caller token exchanged
+for one token per downstream resource, with an impersonated token standing in
+for the verified inbound token.
+
+What was actually blocking it was provisioning, not the login. `svc-sts` gates
+re-exchange on the calling client owning the resource named in the subject
+token's `aud` (`resource.application_id`), and the E2E zone's resources had no
+owner, so every exchange failed while impersonation kept working. Setting the
+field made the same exchange succeed. `bin/provision` now sets it at
+resource-creation time and backfills existing zones.
