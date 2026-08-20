@@ -142,14 +142,21 @@ run(results, "bearer-token-verification-middleware", "1: a real token through th
   "handler ran with the verified auth context"
 end
 
-# A substitute-user token is terminal: the zone refuses it as the subject of a
-# further exchange ("Client is not allowed to exchange token for this
-# resource"), which stops an impersonated token being laundered into a
-# broader one. Pinned here because it is a security property, not a quirk.
-run(results, "impersonation", "invariant: an impersonated token is not re-exchangeable",
+# Re-exchanging a zone-issued access token requires the calling client to own
+# the resource named in that token's `aud`: svc-sts compares
+# `resource.application_id` against the authenticated client and rejects a
+# mismatch with invalid_grant ("Client is not allowed to exchange token for
+# this resource"). bin/provision links the application to its resources as a
+# dependency and never sets `application_id`, so that comparison is against an
+# unset field and no token minted in this zone can be re-exchanged.
+#
+# So this row records the provisioning this suite creates, not a property of
+# impersonation. Set `application_id` at resource-creation time and the same
+# exchange is expected to succeed.
+run(results, "token-exchange", "a token whose aud resource has no owning application is not re-exchangeable",
     guard: impersonated.nil? ? (need_user || "no token to re-exchange") : nil) do
   exchange.exchange_token(subject_token: impersonated.access_token, resource: RESOURCE)
-  raise "expected refusal, the zone re-exchanged a substitute-user token"
+  raise "expected refusal; the zone re-exchanged a token for a resource with no application_id"
 rescue Keycardai::OAuth::OAuthError => e
   "refused with #{e.error}: #{e.error_description}"
 end

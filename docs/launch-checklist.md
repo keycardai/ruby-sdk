@@ -198,12 +198,16 @@ this build, and none is Ruby-specific:
 1. `impersonation.md` requires an `act` chain no live zone issues, root-caused
    to `svc-sts` populating actor info only from an explicit `actor_token`. Owned
    by another team; either the spec relaxes or the service emits the claim.
-2. `token-exchange.md` error codes do not match live behaviour
-   (`invalid_request` and `invalid_grant` where the spec says `invalid_grant`
-   and `invalid_target`).
-3. An unwritten security invariant: substitute-user tokens are not
-   re-exchangeable, which prevents laundering an impersonated token into a
-   broader one.
+2. Unwritten in any spec: re-exchanging a zone-issued access token requires the
+   calling client to own the resource named in that token's `aud`. `svc-sts`
+   compares `resource.application_id` against the authenticated client and
+   rejects a mismatch with `invalid_grant`. It governs whether onward
+   delegation works at all.
+
+   Two earlier readings of the same refusal were wrong and are retracted: a
+   zone does emit `invalid_target` for an unregistered target resource as the
+   spec says, and the check is not an impersonation-specific anti-laundering
+   rule.
 4. `jwt-signing-and-verification.md` contradicts its own Divergences table
    twice, on the `clock_skew` default and the required-claim set.
 
@@ -219,7 +223,10 @@ path-override.
 
 ## 9. Close the last coverage gap (no ticket)
 
-The production `grant` path exchanges a real inbound user token, and
-impersonated tokens are not re-exchangeable, so the live suite cannot stand in
-for it. Covered hermetically in both example selftests. Closing it live needs
-one interactive browser login against a zone.
+The production `grant` path exchanges a real inbound user token. No token
+minted in the E2E zone can be re-exchanged while its resources carry no
+`application_id`, so the live suite cannot stand in for it and a browser login
+alone would not close it either: the inbound user token hits the same
+ownership check. Fix the provisioning first, then the gap may close with
+impersonation and no interactive login at all. Covered hermetically in both
+example selftests.
