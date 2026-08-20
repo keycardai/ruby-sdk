@@ -11,7 +11,7 @@ reproducible with the commands in the last section.
 | Gems | `keycardai-oauth`, `keycardai-mcp`, `keycardai-a2a` |
 | Capability specs covered | 18 of 20 testable, 2 excluded on purpose |
 | Conformance examples | 160 (plus 6 load/sanity checks, 166 total) |
-| Live-zone integration rows | 12 of 12 passing against a real zone |
+| Live-zone integration rows | 13 of 13 passing against a real zone |
 | A2A delegation checks | 11 of 11 hermetic, plus a live run |
 | MCP server end-to-end checks | 8 of 8 hermetic, against the official `mcp` gem |
 | Ruby versions | 3.2, 3.4, 4.0 in CI |
@@ -71,10 +71,11 @@ rows against a real Keycard zone. Objects are provisioned by
 | jwks-caching | 1: resolve a live signing kid, second call cached | pass |
 | client-credentials | 1: acquire a token for a registered client | pass |
 | client-credentials | 2: an invalid client secret is `invalid_client` | pass |
-| token-exchange | 2: a malformed subject token is rejected | pass |
-| token-exchange | 3: an unregistered resource is rejected | pass |
+| token-exchange | 2: a malformed subject token is rejected (`invalid_request`) | pass |
+| token-exchange | 3: an unregistered resource is rejected (`invalid_target`) | pass |
 | impersonation | 1: impersonate a user; `sub` is the target | pass |
-| token-exchange | a token whose aud resource has no owning application is not re-exchangeable | pass |
+| token-exchange | 1: a zone-issued token is exchangeable for a second resource | pass |
+| grant-decorator | 1: the grant path exchanges an inbound token for every resource | pass |
 | jwt-signing-and-verification | 2: verify a real zone token, second verify cached | pass |
 | bearer-token-verification-middleware | 1: a real token through the Rack middleware | pass |
 | access-context | 1: multi-resource grant populates an AccessContext | pass |
@@ -107,16 +108,23 @@ Ruby-specific.
    the authenticated client before accepting a zone-issued access token as a
    `subject_token`, and rejects a mismatch with `invalid_grant` ("Client is not
    allowed to exchange token for this resource"). Its own comment calls this "a
-   structural invariant (not a policy decision)". No spec mentions it, and it
-   governs whether onward delegation works at all, so an SDK author has no way
-   to predict it. Belongs in `token-exchange.md`.
+   structural invariant (not a policy decision)". No spec mentions it, yet it
+   decides whether onward delegation works at all: with the field unset every
+   exchange fails while impersonation keeps working, so it presents as a token
+   problem rather than a provisioning one. Verified by setting it and watching
+   the same exchange start succeeding. Belongs in `token-exchange.md`.
+3. **A malformed `subject_token` yields `invalid_request`, not the
+   `invalid_grant` the spec lists** for a rejected subject token. Pinned as an
+   assertion in the live suite.
 
-   Two earlier readings of this behaviour were wrong and are retracted. It is
-   not an error-code mismatch: a zone does emit `invalid_target` for an
-   unregistered target resource, exactly as the spec says, verified directly.
-   And it is not an impersonation-specific anti-laundering rule: the check
-   applies to every zone-issued access token, and the substitute-user token type
-   is the unsigned *input* to impersonation, never something a zone issues.
+   An earlier reading of these two is retracted. The refusal in finding 2 was
+   described as an impersonation-specific anti-laundering rule; it is neither.
+   The check applies to every zone-issued access token, the substitute-user
+   token type is the unsigned *input* to impersonation rather than anything a
+   zone issues, and with ownership set an impersonated token re-exchanges
+   normally. Finding 3 was also paired with a claim that a zone never emits
+   `invalid_target`; it does, for an unregistered target resource, exactly as
+   the spec says.
 
 Two spec-internal inconsistencies also surfaced while implementing
 `jwt-signing-and-verification.md`, both resolved by following the Divergences
@@ -135,13 +143,12 @@ on. Ruby implements zero skew and the full claim set.
 | `base.md` | Cross-cutting terminology and principles, no Testing table. Its rules are honoured throughout, notably constructor-injected configuration with no implicit environment reads. |
 | `framework-integrations/*` | Governance documents rather than generatable contracts. The Rack integration is judged against the FRAMEWORK-INTEGRATIONS.md checklist instead. |
 
-One capability is implemented but not yet proven live: the production `grant`
-path exchanges a real inbound user token, and no token minted in the E2E zone
-can be re-exchanged while its resources carry no `application_id`, so the live
-suite cannot stand in for it yet. Fixing the provisioning is the prerequisite,
-not the browser login. It is covered
-hermetically end to end in both selftests; closing it live needs one
-interactive browser login.
+Every capability is now proven live, including the production `grant` path. It
+exchanges an inbound caller token for one token per downstream resource, and an
+impersonated token stands in for the verified inbound token, which is what makes
+the row headless: no browser login is involved. Reaching it needed the zone's
+resources to carry an `application_id`, since re-exchange is gated on the
+calling client owning the resource in the token's `aud`.
 
 ## Idiom decisions
 

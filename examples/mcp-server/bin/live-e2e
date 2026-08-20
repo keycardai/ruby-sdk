@@ -94,11 +94,19 @@ end
 
 exchange = need_app ? nil : Keycardai::OAuth::TokenExchangeClient.new(issuer: ISSUER, **creds)
 
-run(results, "token-exchange", "2: a malformed subject token is invalid_grant", guard: need_app) do
+# The spec's row 2 expects invalid_grant for a rejected subject token. A live
+# zone answers invalid_request for a malformed one, so this asserts what the
+# zone actually emits; the mismatch is a finding against the spec. Asserting
+# the code rather than accepting any OAuth error is the point: the previous
+# version passed on anything and its label claimed invalid_grant.
+run(results, "token-exchange", "2: a malformed subject token is rejected (invalid_request, not the spec's invalid_grant)",
+    guard: need_app) do
   exchange.exchange_token(subject_token: "not-a-real-token", resource: RESOURCE)
   raise "expected rejection, got a token"
 rescue Keycardai::OAuth::OAuthError => e
-  "rejected with #{e.error}"
+  raise "expected invalid_request, got #{e.error}" unless e.error == "invalid_request"
+
+  "rejected with invalid_request"
 end
 
 impersonated = nil
@@ -142,23 +150,32 @@ run(results, "bearer-token-verification-middleware", "1: a real token through th
   "handler ran with the verified auth context"
 end
 
-# Re-exchanging a zone-issued access token requires the calling client to own
-# the resource named in that token's `aud`: svc-sts compares
-# `resource.application_id` against the authenticated client and rejects a
-# mismatch with invalid_grant ("Client is not allowed to exchange token for
-# this resource"). bin/provision links the application to its resources as a
-# dependency and never sets `application_id`, so that comparison is against an
-# unset field and no token minted in this zone can be re-exchanged.
-#
-# So this row records the provisioning this suite creates, not a property of
-# impersonation. Set `application_id` at resource-creation time and the same
-# exchange is expected to succeed.
-run(results, "token-exchange", "a token whose aud resource has no owning application is not re-exchangeable",
-    guard: impersonated.nil? ? (need_user || "no token to re-exchange") : nil) do
-  exchange.exchange_token(subject_token: impersonated.access_token, resource: RESOURCE)
-  raise "expected refusal; the zone re-exchanged a token for a resource with no application_id"
-rescue Keycardai::OAuth::OAuthError => e
-  "refused with #{e.error}: #{e.error_description}"
+# Onward delegation: a zone-issued access token is exchangeable for a second
+# resource, carrying the same subject. svc-sts gates this on the calling client
+# owning the resource named in the token's `aud` (resource.application_id), so
+# it only works on a zone where bin/provision set that field.
+run(results, "token-exchange", "1: a zone-issued token is exchangeable for a second resource",
+    guard: impersonated.nil? ? (need_user || "no token to exchange") : (DOWNSTREAM.nil? ? "no KEYCARD_DOWNSTREAM_RESOURCE_ID" : nil)) do
+  onward = exchange.exchange_token(subject_token: impersonated.access_token, resource: DOWNSTREAM)
+  claims = Keycardai::OAuth::TokenVerifier.new(issuers: ISSUER, audiences: DOWNSTREAM)
+                                          .verify_token(onward.access_token)
+  raise "subject changed across the hop: #{claims.subject.inspect}" unless claims.subject == IMPERSONATE
+
+  "exchanged for #{DOWNSTREAM}, sub=#{claims.subject} preserved"
+end
+
+# The production grant path, which is the one an MCP server actually runs: an
+# inbound caller token exchanged for one token per downstream resource. The
+# impersonated token stands in for a verified inbound token, which is what
+# makes this row headless.
+run(results, "grant-decorator", "1: the grant path exchanges an inbound token for every resource",
+    guard: impersonated.nil? ? (need_user || "no inbound token") : (DOWNSTREAM.nil? ? "no KEYCARD_DOWNSTREAM_RESOURCE_ID" : nil)) do
+  provider = Keycardai::MCP::AuthProvider.new(zone_url: ISSUER, **creds)
+  context = provider.exchange_tokens(impersonated.access_token, [RESOURCE, DOWNSTREAM])
+  raise "grant reported errors: #{context.errors.inspect}" if context.errors?
+  raise "granted #{context.successful_resources.length} of 2" unless context.successful_resources.length == 2
+
+  "status=#{context.status}, both resources granted"
 end
 
 run(results, "access-context", "1: multi-resource grant populates an AccessContext",
