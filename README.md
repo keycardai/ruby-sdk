@@ -1,6 +1,5 @@
 # Keycard Ruby SDK
 
-> **Preview.** APIs may change between minor versions while the surface settles.
 > The parity contract these gems implement lives in
 > [keycard-sdk-spec](https://github.com/keycardai/keycard-sdk-spec), and where
 > this SDK stands against it is in

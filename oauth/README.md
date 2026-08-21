@@ -4,7 +4,6 @@ OAuth 2.0 primitives for the Keycard platform. The foundation gem of the
 [Keycard Ruby SDK](https://github.com/keycardai/ruby-sdk); `keycardai-mcp` and
 `keycardai-a2a` build on it.
 
-> **Preview.** APIs may change between minor versions while the surface settles.
 > Conformance against the cross-SDK contract is tracked in the
 > [conformance report](https://github.com/keycardai/ruby-sdk/blob/main/docs/conformance-report.md).
 
