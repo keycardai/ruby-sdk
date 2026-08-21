@@ -2,7 +2,6 @@
 
 Keycard integration for MCP servers in Ruby, attached at the Rack seam.
 
-> **Preview.** APIs may change between minor versions while the surface settles.
 > Conformance against the cross-SDK contract is tracked in the
 > [conformance report](https://github.com/keycardai/ruby-sdk/blob/main/docs/conformance-report.md).
 
