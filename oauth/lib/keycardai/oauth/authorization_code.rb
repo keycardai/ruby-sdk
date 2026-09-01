@@ -15,10 +15,12 @@ module Keycardai
     # @param code_challenge_method [String] the method the challenge was derived with
     # @param scope [String, nil] space-separated scopes
     # @param state [String, nil] CSRF state value
-    # @param resource [String, nil] RFC 8707 resource indicator
+    # @param resources [Array<String>] RFC 8707 resource indicators; each entry
+    #   becomes its own resource parameter, and the authorization server binds
+    #   them into the authorization code at authorize time
     # @return [String] the authorize URL
     def self.build_authorize_url(authorization_endpoint, client_id:, redirect_uri:, code_challenge:,
-                                 code_challenge_method: "S256", scope: nil, state: nil, resource: nil)
+                                 code_challenge_method: "S256", scope: nil, state: nil, resources: [])
       params = {
         "response_type" => "code",
         "client_id" => client_id,
@@ -26,12 +28,11 @@ module Keycardai
         "code_challenge" => code_challenge,
         "code_challenge_method" => code_challenge_method,
         "scope" => scope,
-        "state" => state,
-        "resource" => resource
+        "state" => state
       }.compact
 
       uri = URI(authorization_endpoint)
-      query = URI.encode_www_form(params)
+      query = URI.encode_www_form(params.to_a + Array(resources).map { |resource| ["resource", resource] })
       uri.query = uri.query.nil? || uri.query.empty? ? query : "#{uri.query}&#{query}"
       uri.to_s
     end
@@ -46,14 +47,13 @@ module Keycardai
     # @param redirect_uri [String] must match the authorization request
     # @param client_id [String, nil] public-client identifier
     # @param client_secret [String, nil] confidential-client secret; requires client_id
-    # @param resource [String, nil] RFC 8707 resource indicator
     # @param http_client [#get, #post_form] pluggable transport
     # @param timeout [Numeric, nil]
     # @return [TokenResponse]
     # @raise [OAuthError] an RFC 6749 §5.2 error response (invalid_grant, ...)
     # @raise [HTTPError, ProtocolError, NetworkError, ConfigurationError]
     def self.exchange_authorization_code(issuer, code:, code_verifier:, redirect_uri:, client_id: nil,
-                                         client_secret: nil, resource: nil,
+                                         client_secret: nil,
                                          http_client: HTTP::NetHTTPClient.new, timeout: nil)
       raise ConfigurationError, "client_secret requires client_id" if client_secret && client_id.nil?
 
@@ -68,8 +68,7 @@ module Keycardai
         "code" => code,
         "code_verifier" => code_verifier,
         "redirect_uri" => redirect_uri,
-        "client_id" => client_secret ? nil : client_id,
-        "resource" => resource
+        "client_id" => client_secret ? nil : client_id
       }.compact
       headers = { "Accept" => "application/json" }
       headers["Authorization"] = HTTP.basic_authorization(client_id, client_secret) if client_secret

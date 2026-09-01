@@ -4,6 +4,7 @@ require_relative "oauth/version"
 require_relative "oauth/errors"
 require_relative "oauth/http"
 require_relative "oauth/discovery"
+require_relative "oauth/userinfo"
 require_relative "oauth/token_types"
 require_relative "oauth/token_requests"
 require_relative "oauth/substitute_user"
@@ -29,8 +30,9 @@ require_relative "oauth/jwt_verifier"
 module Keycardai
   # OAuth 2.0 primitives for the Keycard platform: token exchange (RFC 8693),
   # client credentials, authorization code + PKCE, dynamic client registration
-  # (RFC 7591), authorization server discovery (RFC 8414), JWT/JWKS
-  # verification, application credentials, and AccessContext.
+  # (RFC 7591), authorization server discovery (RFC 8414), UserInfo (OIDC Core
+  # 1.0 §5.3), JWT/JWKS verification, application credentials, and
+  # AccessContext.
   #
   # Contract: https://github.com/keycardai/keycard-sdk-spec
   module OAuth

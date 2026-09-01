@@ -1,8 +1,11 @@
 # frozen_string_literal: true
 
-# Conformance suite for keycard-sdk-spec specs/oauth-client/authorization-code-pkce.md.
-# Each example maps to a row of the spec's Unit Tests table. The high-level
-# authenticate loopback flow is covered by the spec's integration table only.
+# Conformance suite for keycard-sdk-spec
+# specs/oauth-client/authorization-code-pkce.md at spec-version 3. Each example
+# maps to a row of the spec's Unit Tests table. The high-level authenticate
+# loopback flow is covered by the spec's integration table only. Rows 8 to 11
+# belong to the two-call web-app flow, which this gem does not ship; rows 12 to
+# 14 are pinned on the building blocks that flow composes.
 RSpec.describe "Authorization code with PKCE" do
   let(:zone) { ZoneFixture.new }
   let(:token_payload) { { "access_token" => "at_user", "token_type" => "Bearer" } }
@@ -104,6 +107,41 @@ RSpec.describe "Authorization code with PKCE" do
         expect(e.error).to eq("invalid_grant")
         expect(e.error_description).to eq("code already used")
       }
+  end
+
+  it "12: builds the authorize URL with one resource parameter per resources entry" do
+    pair = Keycardai::OAuth::PKCE.generate_pair
+    resources = ["https://api.acme.test", "https://files.acme.test"]
+    url = Keycardai::OAuth.build_authorize_url(
+      "#{zone.issuer}/oauth/authorize",
+      client_id: "cid", redirect_uri: "http://127.0.0.1:8765/callback",
+      code_challenge: pair.code_challenge, code_challenge_method: pair.code_challenge_method,
+      resources: resources
+    )
+
+    pairs = URI.decode_www_form(URI(url).query)
+    expect(pairs.filter_map { |name, value| value if name == "resource" }).to eq(resources)
+  end
+
+  it "13: rejects the removed single-resource argument on the authorize URL builder" do
+    pair = Keycardai::OAuth::PKCE.generate_pair
+
+    expect do
+      Keycardai::OAuth.build_authorize_url(
+        "#{zone.issuer}/oauth/authorize",
+        client_id: "cid", redirect_uri: "http://127.0.0.1:8765/callback",
+        code_challenge: pair.code_challenge, code_challenge_method: pair.code_challenge_method,
+        resource: "https://api.acme.test"
+      )
+    end.to raise_error(ArgumentError, /resource/)
+  end
+
+  it "14: the code exchange sends no resource parameter and takes none" do
+    http = token_http
+    exchange(http)
+
+    expect(token_call(http).params).not_to have_key("resource")
+    expect { exchange(http, resource: "https://api.acme.test") }.to raise_error(ArgumentError, /resource/)
   end
 
   it "rejects a client_secret without a client_id" do

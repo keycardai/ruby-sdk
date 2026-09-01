@@ -9,8 +9,8 @@ reproducible with the commands in the last section.
 | | |
 | --- | --- |
 | Gems | `keycardai-oauth`, `keycardai-mcp`, `keycardai-a2a` |
-| Capability specs covered | 18 of 20 testable, 2 excluded on purpose |
-| Conformance examples | 160 (plus 6 load/sanity checks, 166 total) |
+| Capability specs covered | 19 of 22, 2 excluded on purpose, `delegated-access/as-itself` an open gap |
+| Conformance examples | 173 (plus 6 load/sanity checks, 179 total) |
 | Live-zone integration rows | 13 of 13 passing against a real zone |
 | A2A delegation checks | 11 of 11 hermetic, plus a live run |
 | MCP server end-to-end checks | 8 of 8 hermetic, against the official `mcp` gem |
@@ -31,11 +31,12 @@ which are labelled without a row number.
 | --- | --- | --- |
 | `jwt-jwks/jwt-signing-and-verification` | `jwt_signing_and_verification_spec.rb` | 18 |
 | `jwt-jwks/jwks-caching` | `jwks_caching_spec.rb` | 11 |
-| `oauth-client/authorization-server-discovery` | `authorization_server_discovery_spec.rb` | 7 |
+| `oauth-client/authorization-server-discovery` | `authorization_server_discovery_spec.rb` | 9 |
+| `oauth-client/userinfo` | `userinfo_spec.rb` | 8 |
 | `oauth-client/client-credentials` | `client_credentials_spec.rb` | 6 |
 | `oauth-client/token-exchange` | `token_exchange_spec.rb` | 10 |
 | `oauth-client/dynamic-client-registration` | `dynamic_client_registration_spec.rb` | 5 |
-| `oauth-client/authorization-code-pkce` | `authorization_code_pkce_spec.rb` + `authenticate_flow_spec.rb` | 14 |
+| `oauth-client/authorization-code-pkce` | `authorization_code_pkce_spec.rb` + `authenticate_flow_spec.rb` | 17 |
 | `application-credentials/client-secret` | `client_secret_spec.rb` | 6 |
 | `application-credentials/web-identity` | `web_identity_spec.rb` | 8 |
 | `application-credentials/workload-identity` | `workload_identity_spec.rb` | 10 |
@@ -134,6 +135,28 @@ leeway, and the Contract lists only `exp` and `client_id` as required claims
 while Divergences records the full RFC 9068 set that TS and Python converged
 on. Ruby implements zero skew and the full claim set.
 
+Three further items surfaced while implementing the OIDC discovery fields,
+UserInfo, and the spec-version 3 authorization-code revision:
+
+4. **`authorization-code-pkce.md` keeps an optional `resource` in its
+   code-exchange inputs table while spec-version 3 removes resource input from
+   completion.** The two read as a contradiction for a gem whose only code
+   exchange is the building block the flow composes. Ruby resolves it by
+   dropping the parameter from the exchange entirely, so no caller can send a
+   value the authorization server ignores. Python
+   (`operations/_authorize.py`) and TypeScript (`src/pkce.ts`) still accept
+   `resource` on their standalone exchange, so this is a live divergence, not
+   a settled contract.
+5. **Both Divergences tables are stale in the direction of "nobody ships
+   this".** `authorization-server-discovery.md` records that no SDK types
+   `userinfo_endpoint` / `end_session_endpoint`, and `userinfo.md` records that
+   no SDK implements the capability, yet Python shipped both in
+   `keycardai-oauth` 0.22.0 and TypeScript in `@keycardai/oauth` 0.21.0.
+   `userinfo.md` also carries no `ruby` entry in its `packages` front matter.
+6. **`delegated-access/as-itself.md` has no Ruby coverage and is not an
+   exclusion.** It postdates this report's first pass and was missing from the
+   counts entirely; it is now carried above as an open gap.
+
 ## Deliberate exclusions
 
 | Spec | Why |
@@ -164,7 +187,7 @@ contract.
 
 ```sh
 bundle install
-bundle exec rake                      # 166 examples + RuboCop
+bundle exec rake                      # 179 examples + RuboCop
 
 cd examples/mcp-server
 bin/selftest                          # 8 checks, no zone needed

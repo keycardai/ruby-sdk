@@ -20,7 +20,8 @@ module Keycardai
     # @param issuer [String] the zone's issuer URL
     # @param client_id [String]
     # @param scope [String, nil] space-separated scopes
-    # @param resource [String, nil] RFC 8707 resource indicator
+    # @param resources [Array<String>] RFC 8707 resource indicators requested
+    #   at authorize time, one resource parameter per entry
     # @param port [Integer] loopback port; 0 binds an ephemeral port
     # @param callback_timeout [Numeric] seconds to wait for the redirect
     # @param client_secret [String, nil] confidential clients only
@@ -33,7 +34,7 @@ module Keycardai
     # @raise [InteractionTimeoutError] the user did not complete the redirect
     # @raise [OAuthError] the authorization server denied the request
     # @raise [ProtocolError] the redirect's state did not match (code state_mismatch)
-    def self.authenticate(issuer:, client_id:, scope: nil, resource: nil, port: DEFAULT_CALLBACK_PORT,
+    def self.authenticate(issuer:, client_id:, scope: nil, resources: [], port: DEFAULT_CALLBACK_PORT,
                           callback_timeout: DEFAULT_CALLBACK_TIMEOUT, client_secret: nil,
                           verifier_length: PKCE::DEFAULT_VERIFIER_LENGTH,
                           http_client: HTTP::NetHTTPClient.new, browser_opener: nil, timeout: nil)
@@ -43,13 +44,13 @@ module Keycardai
 
       Loopback::CallbackServer.open(port: port) do |server|
         open_authorize_page(server, authorization_endpoint, pair, state,
-                            client_id: client_id, scope: scope, resource: resource,
+                            client_id: client_id, scope: scope, resources: resources,
                             browser_opener: browser_opener)
         code = server.wait_for_code(state: state, timeout: callback_timeout)
         exchange_authorization_code(
           issuer,
           code: code, code_verifier: pair.code_verifier, redirect_uri: server.redirect_uri,
-          client_id: client_id, client_secret: client_secret, resource: resource,
+          client_id: client_id, client_secret: client_secret,
           http_client: http_client, timeout: timeout
         )
       end
@@ -62,11 +63,11 @@ module Keycardai
     end
     private_class_method :authorization_endpoint_for
 
-    def self.open_authorize_page(server, endpoint, pair, state, client_id:, scope:, resource:, browser_opener:)
+    def self.open_authorize_page(server, endpoint, pair, state, client_id:, scope:, resources:, browser_opener:)
       url = build_authorize_url(
         endpoint,
         client_id: client_id, redirect_uri: server.redirect_uri, code_challenge: pair.code_challenge,
-        code_challenge_method: pair.code_challenge_method, scope: scope, state: state, resource: resource
+        code_challenge_method: pair.code_challenge_method, scope: scope, state: state, resources: resources
       )
       (browser_opener || Loopback.method(:open_browser)).call(url)
     end

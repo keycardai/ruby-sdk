@@ -7,11 +7,15 @@ module Keycardai
   # Authorization-server discovery (RFC 8414): the operation, its metadata
   # type, and the URL/parsing internals shared with JWKSKeyring.
   module OAuth
-    # OAuth 2.0 authorization-server metadata (RFC 8414). Standard fields are
-    # first-class members; the complete document, including unknown fields, is
-    # preserved in +raw+ and reachable through +[]+.
+    # OAuth 2.0 authorization-server metadata (RFC 8414), including the OpenID
+    # Connect Discovery 1.0 §3 members Keycard zones serve from the same
+    # document. Standard fields are first-class members; the complete
+    # document, including unknown fields, is preserved in +raw+ and reachable
+    # through +[]+. Every field but +issuer+ is optional and nil when the
+    # document omits it.
     AuthorizationServerMetadata = Data.define(
       :issuer, :token_endpoint, :authorization_endpoint, :jwks_uri, :registration_endpoint,
+      :userinfo_endpoint, :end_session_endpoint,
       :grant_types_supported, :token_endpoint_auth_methods_supported, :response_types_supported, :raw
     ) do
       # @param field [String] a metadata field name
@@ -68,17 +72,8 @@ module Keycardai
         document = parse_document(issuer, body)
         validate_issuer(issuer, document)
 
-        AuthorizationServerMetadata.new(
-          issuer: document["issuer"],
-          token_endpoint: document["token_endpoint"],
-          authorization_endpoint: document["authorization_endpoint"],
-          jwks_uri: document["jwks_uri"],
-          registration_endpoint: document["registration_endpoint"],
-          grant_types_supported: document["grant_types_supported"],
-          token_endpoint_auth_methods_supported: document["token_endpoint_auth_methods_supported"],
-          response_types_supported: document["response_types_supported"],
-          raw: document
-        )
+        fields = (AuthorizationServerMetadata.members - [:raw]).to_h { |name| [name, document[name.to_s]] }
+        AuthorizationServerMetadata.new(**fields, raw: document)
       end
 
       def parse_document(issuer, body)
