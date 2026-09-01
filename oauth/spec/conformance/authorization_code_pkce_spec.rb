@@ -66,6 +66,7 @@ RSpec.describe "Authorization code with PKCE" do
       "code_challenge_method" => "S256",
       "scope" => "openid profile"
     )
+    expect(URI.decode_www_form(uri.query).map(&:first)).not_to include("resource")
   end
 
   it "4: exchanges a code with grant_type, code, code_verifier, and redirect_uri in the body" do

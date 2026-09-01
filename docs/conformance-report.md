@@ -10,6 +10,7 @@ reproducible with the commands in the last section.
 | --- | --- |
 | Gems | `keycardai-oauth`, `keycardai-mcp`, `keycardai-a2a` |
 | Capability specs covered | 19 of 22, 2 excluded on purpose, `delegated-access/as-itself` an open gap |
+| Partial coverage | `authorization-code-pkce` v3 rows 8 to 11 (the stateless web-app begin/complete pair) are unshipped; Ruby covers the flow's building blocks and the loopback `authenticate` |
 | Conformance examples | 173 (plus 6 load/sanity checks, 179 total) |
 | Live-zone integration rows | 13 of 13 passing against a real zone |
 | A2A delegation checks | 11 of 11 hermetic, plus a live run |
