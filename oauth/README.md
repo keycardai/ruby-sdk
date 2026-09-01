@@ -17,7 +17,8 @@ Capabilities (per [keycard-sdk-spec](https://github.com/keycardai/keycard-sdk-sp
 - Client credentials grant (RFC 6749 §4.4)
 - Authorization code + PKCE, including the challenge-driven loopback flow (RFC 8252)
 - Dynamic client registration (RFC 7591)
-- Authorization server discovery (RFC 8414)
+- Authorization server discovery (RFC 8414), including the OIDC Discovery 1.0 §3 endpoints
+- UserInfo: the signed-in user's identity claims (OIDC Core 1.0 §5.3)
 - JWT signing and verification, JWKS keyring with caching
 - Application credentials: ClientSecret (incl. multi-zone), WebIdentity (RFC 7523),
   WorkloadIdentity with pluggable identity token sources
@@ -84,6 +85,24 @@ context.failed_resources
 
 One resource failing never takes down the others; the failure lands on the
 context rather than raising, and `access` is where you choose to raise.
+
+### Read the signed-in user's claims
+
+```ruby
+user = Keycardai::OAuth.fetch_userinfo(
+  "https://your-zone.keycard.cloud",
+  access_token: user_access_token,
+)
+
+user.sub
+user["email"]
+user["groups"]
+```
+
+Zone access tokens are authorization-only, so identity claims live behind the
+issuer's `userinfo_endpoint` rather than in the token. Pass `metadata:` to reuse
+metadata you already discovered; nothing is cached, because group membership can
+change server-side.
 
 ### Act as a named user
 

@@ -58,6 +58,24 @@ RSpec.describe "Authorization server discovery" do
     expect(discover(http)["x_vendor_field"]).to eq("kept")
   end
 
+  it "7: types the OIDC userinfo_endpoint and end_session_endpoint when the document carries them" do
+    http = zone.http_client(zone.metadata_url => -> { json_response(zone.metadata(oidc: true)) })
+
+    metadata = discover(http)
+
+    expect(metadata.userinfo_endpoint).to eq(zone.userinfo_url)
+    expect(metadata.end_session_endpoint).to eq(zone.end_session_url)
+    # Fields beyond the spec's typed set stay reachable through the document.
+    expect(metadata["scopes_supported"]).to eq(%w[openid profile])
+  end
+
+  it "8: leaves the OIDC fields absent, without error, when the document omits them" do
+    metadata = discover(zone.http_client)
+
+    expect(metadata.userinfo_endpoint).to be_nil
+    expect(metadata.end_session_endpoint).to be_nil
+  end
+
   it "raises a configuration error for an empty issuer" do
     expect { Keycardai::OAuth.fetch_authorization_server_metadata("", http_client: zone.http_client) }
       .to raise_error(Keycardai::OAuth::ConfigurationError)

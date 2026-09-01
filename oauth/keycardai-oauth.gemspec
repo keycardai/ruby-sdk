@@ -10,7 +10,7 @@ Gem::Specification.new do |spec|
   spec.summary = "OAuth 2.0 primitives for the Keycard platform"
   spec.description = "Token exchange (RFC 8693), client credentials, authorization code + PKCE, " \
                      "dynamic client registration (RFC 7591), authorization server discovery " \
-                     "(RFC 8414), JWT/JWKS verification, application credentials, and the " \
+                     "(RFC 8414), UserInfo, JWT/JWKS verification, application credentials, and the " \
                      "AccessContext delegated-access container."
   spec.homepage = "https://github.com/keycardai/ruby-sdk"
   spec.license = "MIT"
