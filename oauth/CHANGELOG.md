@@ -15,6 +15,41 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.3.0-keycardai-oauth (2026-09-01)
+
+
+- feat(keycardai-oauth): UserInfo, typed OIDC discovery fields, multi-resource authorize (#29)
+- * feat(keycardai-oauth): UserInfo, typed OIDC discovery fields, multi-resource authorize
+- Three capabilities from the specs of record, at their current spec versions:
+authorization-server-discovery v2, userinfo, authorization-code-pkce v3.
+- Changed signatures, all in Keycardai::OAuth:
+-   build_authorize_url(..., resource: nil)  ->  build_authorize_url(..., resources: [])
+  exchange_authorization_code(..., resource: nil)  ->  resource removed outright
+  authenticate(..., resource: nil)  ->  authenticate(..., resources: [])
+  AuthorizationServerMetadata gains userinfo_endpoint and end_session_endpoint
+- The single-resource arguments are removed, not deprecated, per spec-version 3.
+Each entry of resources becomes its own RFC 8707 resource parameter on the
+authorize URL; the authorization server binds them into the code at authorize
+time, so the code exchange sends no resource at all.
+- fetch_userinfo GETs the discovered userinfo_endpoint with a Bearer credential
+and Accept: application/json, fails with a configuration error before any
+request when metadata advertises no endpoint, rejects application/jwt bodies,
+requires a non-empty sub, and parses the RFC 6750 WWW-Authenticate challenge on
+a 401 into a typed OAuthError, defaulting to invalid_token when the challenge
+carries no error.
+- No version or changelog edits: the version pipeline is dormant until ECO-291
+and per-gem breaking-change scoping is unaudited, so this carries no
+breaking-change marker despite the changed signatures.
+- Co-Authored-By: Larry Osakwe <larry@keycard.ai>
+- * test(keycardai-oauth): pin the no-resources case, report the web-app gap
+- Row 3 now asserts a resource-less authorize URL carries no resource
+parameter, and the conformance report summary names the unshipped
+web-app begin/complete rows the way it names the as-itself gap.
+- ---------
+- Co-authored-by: devin-ai-keycard <devin-ai@keycard.ai>
+Co-authored-by: Larry Osakwe <larry@keycard.ai>
+Co-authored-by: Larry-Osakwe <larryosak@gmail.com>
+
 ## 0.2.0-keycardai-oauth (2026-08-19)
 
 
