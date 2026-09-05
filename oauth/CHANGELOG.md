@@ -15,6 +15,12 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.4.0-keycardai-oauth (2026-09-05)
+
+
+- feat(keycardai-oauth): expire the cached token endpoint after discovery_ttl
+- ECO-366 Ruby leg, audited against keycard-sdk-spec's metadata-failures-are-not-sticky contract. The sticky-failure defect does not exist in Ruby: token-endpoint discovery stored outcomes with ||= under a mutex, so a raise cached nothing and an interrupted caller left nothing behind. The one gap was the endpoint being cached for the client lifetime; it is now cached for discovery_ttl (3600s default, the JWKS keyring's knob and default) with a clock: keyword mirroring TokenVerifier. No negative cache and no retryable field: the spec makes deterministic-failure caching optional and Ruby never stored failures, and retryability classification is ECO-360's Ruby leg. Conformance tests cover the spec's discovery rows on both clients via one shared example group.
+
 ## 0.3.0-keycardai-oauth (2026-09-01)
 
 
