@@ -8,6 +8,10 @@ module Keycardai
     # endpoint discovery with caching, shared-secret (HTTP Basic) client
     # authentication, and RFC 6749 §5.2 error parsing. Not public API.
     module TokenRequests
+      # Default lifetime of a discovered token endpoint, in seconds; the same
+      # knob and default as the JWKS keyring's jwks_uri cache.
+      DEFAULT_DISCOVERY_TTL = 3600
+
       # Parse a token-endpoint response: a TokenResponse on 2xx, a raised
       # typed error otherwise.
       #
@@ -52,13 +56,16 @@ module Keycardai
 
       private
 
-      def initialize_token_client(issuer:, credential:, client_id:, client_secret:, http_client:, timeout:)
+      def initialize_token_client(issuer:, credential:, client_id:, client_secret:, http_client:, timeout:,
+                                  discovery_ttl: DEFAULT_DISCOVERY_TTL, clock: -> { Time.now })
         validate_client_auth(credential, client_id, client_secret)
 
         @issuer = issuer
         @credential = credential || (client_id ? ClientSecret.new(client_id, client_secret) : nil)
         @http_client = http_client
         @timeout = timeout
+        @discovery_ttl = discovery_ttl
+        @clock = clock
         @token_endpoints = {}
         @token_endpoint_mutex = Mutex.new
       end
@@ -72,17 +79,31 @@ module Keycardai
         raise ConfigurationError, "client_id and client_secret must be provided together"
       end
 
-      # Discover a zone's token endpoint once and cache it, keyed by issuer
-      # so multi-zone clients never reuse another zone's endpoint.
+      # Discover a zone's token endpoint and cache it for discovery_ttl, keyed
+      # by issuer so multi-zone clients never reuse another zone's endpoint.
+      # Only a success is recorded: a failed discovery raises to its caller and
+      # the next call discovers again. The mutex serializes cold-cache callers
+      # so concurrent first calls perform a single fetch; an interrupted caller
+      # releases it and leaves nothing behind for the others.
       def token_endpoint(issuer = @issuer)
         @token_endpoint_mutex.synchronize do
-          @token_endpoints[issuer] ||= begin
-            metadata = OAuth.fetch_authorization_server_metadata(issuer, http_client: @http_client,
-                                                                         timeout: @timeout)
-            metadata.token_endpoint ||
-              raise(ProtocolError.new("metadata for #{issuer} has no token_endpoint", code: "invalid_metadata"))
-          end
+          fresh_token_endpoint(issuer) || discover_token_endpoint(issuer)
         end
+      end
+
+      def fresh_token_endpoint(issuer)
+        entry = @token_endpoints[issuer]
+        return nil unless entry
+
+        entry[:endpoint] if @clock.call - entry[:fetched_at] <= @discovery_ttl
+      end
+
+      def discover_token_endpoint(issuer)
+        metadata = OAuth.fetch_authorization_server_metadata(issuer, http_client: @http_client, timeout: @timeout)
+        endpoint = metadata.token_endpoint ||
+                   raise(ProtocolError.new("metadata for #{issuer} has no token_endpoint", code: "invalid_metadata"))
+        @token_endpoints[issuer] = { endpoint: endpoint, fetched_at: @clock.call }
+        endpoint
       end
 
       def post_token_request(params, issuer: @issuer)

@@ -22,6 +22,12 @@ RSpec.describe Keycardai::OAuth::ClientCredentialsClient do
     http.calls.find { |call| call.url == zone.token_url }
   end
 
+  def request(subject)
+    subject.request_token(scope: "read")
+  end
+
+  include_examples "token-endpoint discovery is not sticky", %w[7 8 9 10 11 12]
+
   it "1: a request with a scope sets grant_type=client_credentials and scope in the body" do
     http = token_http
     client(http).request_token(scope: "read")

@@ -23,6 +23,12 @@ RSpec.describe Keycardai::OAuth::TokenExchangeClient do
     http.calls.find { |call| call.url == zone.token_url }
   end
 
+  def request(subject)
+    subject.exchange_token(subject_token: "at_subject")
+  end
+
+  include_examples "token-endpoint discovery is not sticky", %w[8 9 10 11 12 13]
+
   it "1: defaults grant_type to token-exchange and subject_token_type to access-token" do
     http = token_http
     client(http).exchange_token(subject_token: "at_subject")
