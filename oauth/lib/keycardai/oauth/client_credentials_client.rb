@@ -8,7 +8,8 @@ module Keycardai
     # client assertion carried on the request.
     #
     # The token endpoint is discovered from the issuer on first use and
-    # cached. Requests do not retry transparently.
+    # cached for discovery_ttl; a failed discovery is not cached. Requests do
+    # not retry transparently.
     class ClientCredentialsClient
       include TokenRequests
 
@@ -21,12 +22,16 @@ module Keycardai
       #   provide both or neither
       # @param http_client [#get, #post_form] pluggable transport
       # @param timeout [Numeric, nil] request timeout in seconds
+      # @param discovery_ttl [Numeric] token-endpoint cache lifetime in seconds
+      # @param clock [#call] returns the current Time; override in tests
       # @raise [ConfigurationError] when only one of client_id/client_secret is
       #   given, or a credential is combined with a raw pair
       def initialize(issuer:, credential: nil, client_id: nil, client_secret: nil,
-                     http_client: HTTP::NetHTTPClient.new, timeout: nil)
+                     http_client: HTTP::NetHTTPClient.new, timeout: nil,
+                     discovery_ttl: TokenRequests::DEFAULT_DISCOVERY_TTL, clock: -> { Time.now })
         initialize_token_client(issuer: issuer, credential: credential, client_id: client_id,
-                                client_secret: client_secret, http_client: http_client, timeout: timeout)
+                                client_secret: client_secret, http_client: http_client, timeout: timeout,
+                                discovery_ttl: discovery_ttl, clock: clock)
       end
 
       # Request a token for the client itself.
