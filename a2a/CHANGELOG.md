@@ -12,3 +12,31 @@ Agent-to-agent delegation: agent card discovery with caching, per-hop RFC 8693
 token exchange that keeps the user as the subject, and JSON-RPC `message/send`
 invocation. Wraps no A2A SDK; hosting an agent inside a framework is out of
 scope.
+
+## 0.2.0-keycardai-a2a (2026-09-07)
+
+
+- feat(keycardai-a2a): speak A2A protocol 1.0 by default
+- ECO-161 Ruby leg, after typescript-sdk #173 and go-sdk #47. DelegationClient sends 1.0-generation requests by default (SendMessage, A2A-Version: 1.0, ROLE_USER roles, untagged text parts, endpoint read from the card's JSONRPC supportedInterfaces entry) instead of the 0.3 envelope, so invoking a keycardai-a2a (Python) or @keycardai/a2a agent no longer returns MethodNotFound. protocol_version: now selects the whole wire generation through Keycardai::A2A::Wire: LEGACY_PROTOCOL_VERSION sends a real 0.3 envelope (role and part shapes translated on the way out), and any other value raises ArgumentError instead of being sent verbatim. A2A.text_message builds the 1.0 shape either way. The JSON-RPC result is returned as the agent sent it, the gem's existing contract.
+- BREAKING CHANGE(keycardai-a2a): PROTOCOL_VERSION and MESSAGE_SEND_METHOD constant values moved to the 1.0 generation, and 0.3 interop requires protocol_version: LEGACY_PROTOCOL_VERSION.
+
+## 0.1.0-keycardai-a2a (2026-08-19)
+
+
+- feat(keycardai-a2a): delegation client and agent card discovery (#10)
+- Phase 3: the A2A delegation contract per specs/a2a/a2a-delegation.md,
+matching the Go boundary (delegation client only; agent-framework
+hosting glue is out of scope, and no community A2A gem dependency):
+- - ServiceDiscovery: agent card fetch from /.well-known/agent-card.json
+  with a 15-minute refreshable cache; a card must carry a name
+- DelegationClient: discover, RFC 8693 exchange (subject = the user
+  token, resource = the target agent, this agent authenticates with its
+  credential, no actor_token), then JSON-RPC message/send with the
+  exchanged bearer token and X-A2A-Protocol-Version 0.3; the invocation
+  endpoint is read from the card or derived by convention
+- Typed DiscoveryError / InvocationError (with the JSON-RPC error
+  payload); exchange failures surface as the oauth OAuthError per hop
+- A2A.text_message convenience for single-text-part params
+- Conformance suite maps to all five spec unit rows, plus card-declared
+endpoint and cache-TTL coverage; the multi-hop act-chain rows are the
+integration table for the E2E phase.
