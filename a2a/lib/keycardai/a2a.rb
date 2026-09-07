@@ -3,6 +3,7 @@
 require "keycardai/oauth"
 require_relative "a2a/version"
 require_relative "a2a/errors"
+require_relative "a2a/wire"
 require_relative "a2a/service_discovery"
 require_relative "a2a/delegation_client"
 
@@ -21,10 +22,7 @@ module Keycardai
     # JSON-RPC invocation path, relative to an agent's base URL.
     JSONRPC_PATH = "/a2a/jsonrpc"
 
-    # JSON-RPC method used to deliver a message to an agent.
-    MESSAGE_SEND_METHOD = "message/send"
-
-    # A2A protocol version sent with each invocation.
-    PROTOCOL_VERSION = "0.3"
+    # The protocol-generation constants (PROTOCOL_VERSION, MESSAGE_SEND_METHOD,
+    # ROLE_USER, and their LEGACY_ 0.3 counterparts) live in a2a/wire.rb.
   end
 end

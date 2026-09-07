@@ -24,7 +24,12 @@ module Keycardai
       # @param http_client [#get, #post_form, #post_json] pluggable transport
       # @param discovery [ServiceDiscovery, nil] card resolution override
       # @param invoke_timeout [Numeric, nil] JSON-RPC call timeout
-      # @param protocol_version [String] sent as X-A2A-Protocol-Version
+      # @param protocol_version [String] the A2A generation to speak: PROTOCOL_VERSION
+      #   (1.0: SendMessage, A2A-Version header, ROLE_USER roles, untagged text parts)
+      #   or LEGACY_PROTOCOL_VERSION (0.3: message/send, X-A2A-Protocol-Version header,
+      #   "user" roles, kind-tagged parts). Build the message with A2A.text_message
+      #   either way; the client translates it for 0.3.
+      # @raise [ArgumentError] protocol_version is neither supported generation
       def initialize(issuer:, credential: nil, client_id: nil, client_secret: nil,
                      http_client: OAuth::HTTP::NetHTTPClient.new, discovery: nil,
                      invoke_timeout: nil, protocol_version: PROTOCOL_VERSION)
@@ -34,15 +39,17 @@ module Keycardai
         @discovery = discovery || ServiceDiscovery.new(http_client: http_client)
         @http_client = http_client
         @invoke_timeout = invoke_timeout
-        @protocol_version = protocol_version
+        @wire = Wire.for(protocol_version)
       end
 
       # Delegate a call to another agent: discover, exchange, invoke.
       #
       # @param target [String] the downstream agent's base URL
       # @param subject_token [String] the inbound user's verified access token
-      # @param message [Hash] the A2A message/send params
-      # @return [Result]
+      # @param message [Hash] the A2A SendMessage params (see A2A.text_message)
+      # @return [Result] message is the JSON-RPC result as the agent returned it:
+      #   for a 1.0 agent an object with a +message+ or +task+ key
+      # @raise [ArgumentError] protocol_version is unsupported
       # @raise [DiscoveryError] the agent card cannot be resolved
       # @raise [Keycardai::OAuth::OAuthError] the exchange was rejected
       # @raise [InvocationError] the JSON-RPC call failed
@@ -55,17 +62,18 @@ module Keycardai
 
       private
 
-      # The invocation endpoint: read from the card when it names one,
-      # otherwise derived by convention from the target base URL.
+      # The invocation endpoint: read from the card when it names one (a 1.0
+      # card's JSONRPC interface or a 0.3 card's url), otherwise derived by
+      # convention from the target base URL.
       def jsonrpc_url(target, card)
-        card["url"].is_a?(String) && !card["url"].empty? ? card["url"] : "#{target.chomp("/")}#{JSONRPC_PATH}"
+        @wire.endpoint_from(card) || "#{target.chomp("/")}#{JSONRPC_PATH}"
       end
 
       def post_jsonrpc(url, access_token, message)
-        payload = { "jsonrpc" => "2.0", "id" => SecureRandom.uuid, "method" => MESSAGE_SEND_METHOD,
-                    "params" => message }
+        payload = { "jsonrpc" => "2.0", "id" => SecureRandom.uuid, "method" => @wire.method_name,
+                    "params" => @wire.encode_params(message) }
         headers = { "Accept" => "application/json", "Authorization" => "Bearer #{access_token}",
-                    "X-A2A-Protocol-Version" => @protocol_version }
+                    @wire.header => @wire.version }
         response = begin
           @http_client.post_json(url, payload, headers: headers, timeout: @invoke_timeout)
         rescue OAuth::NetworkError => e
@@ -91,16 +99,17 @@ module Keycardai
       end
     end
 
-    # Build A2A message/send params carrying one text part, the common case
-    # for driving a downstream agent.
+    # Build A2A 1.0 SendMessage params carrying one text part, the common case
+    # for driving a downstream agent. A client configured for 0.3 translates
+    # the role and part shape on the way out.
     #
     # @param text [String]
     # @return [Hash]
     def self.text_message(text)
       {
         "message" => {
-          "role" => "user",
-          "parts" => [{ "kind" => "text", "text" => text }],
+          "role" => ROLE_USER,
+          "parts" => [{ "text" => text }],
           "messageId" => SecureRandom.uuid
         }
       }

@@ -8,7 +8,9 @@ RSpec.describe Keycardai::A2A do
   it "pins the delegation-contract constants from the a2a spec" do
     expect(Keycardai::A2A::AGENT_CARD_PATH).to eq("/.well-known/agent-card.json")
     expect(Keycardai::A2A::JSONRPC_PATH).to eq("/a2a/jsonrpc")
-    expect(Keycardai::A2A::MESSAGE_SEND_METHOD).to eq("message/send")
-    expect(Keycardai::A2A::PROTOCOL_VERSION).to eq("0.3")
+    expect(Keycardai::A2A::MESSAGE_SEND_METHOD).to eq("SendMessage")
+    expect(Keycardai::A2A::PROTOCOL_VERSION).to eq("1.0")
+    expect(Keycardai::A2A::LEGACY_MESSAGE_SEND_METHOD).to eq("message/send")
+    expect(Keycardai::A2A::LEGACY_PROTOCOL_VERSION).to eq("0.3")
   end
 end
