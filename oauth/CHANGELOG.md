@@ -15,6 +15,13 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.5.0-keycardai-oauth (2026-09-08)
+
+
+- feat(keycardai-oauth): reuse Net::HTTP sessions in the default transport
+- ECO-383. NetHTTPClient#perform built a fresh Net::HTTP per request, so every oauth call (and every verify and token exchange in the mcp gem, whose AuthProvider holds one NetHTTPClient) paid a new TCP and TLS handshake. Sessions are now kept per instance, per thread, per (host, port, scheme): the request path takes no lock, a small mutex guards only the registry of per-thread session maps, and dead threads are swept when the registry is touched. close finishes every session; an unclosed throwaway instance keeps its sessions until garbage collection, the same abandonment doctrine as the Python fix (python-sdk #291). Timeouts are applied per request, restoring Net::HTTP's own defaults when absent. No new dependencies; the gem stays stdlib-only.
+- Behavior change: a keepalive connection the server dropped while idle surfaces as NetworkError on the next request, where a fresh-connection design could not fail that way; the session reconnects on the attempt after. The Ruby retryability classification (ECO-360) is the consumer-side answer when it lands.
+
 ## 0.4.0-keycardai-oauth (2026-09-05)
 
 
