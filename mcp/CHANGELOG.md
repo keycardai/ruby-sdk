@@ -13,3 +13,44 @@ verification with RFC 6750 challenges, OAuth metadata endpoints (RFC 9728
 protected-resource with path insertion, an RFC 8414 authorization-server proxy,
 and JWKS), and an AuthProvider whose `grant` middleware exchanges the caller's
 token per resource into an AccessContext. Wraps no MCP SDK.
+
+## 0.1.1-keycardai-mcp (2026-09-16)
+
+
+- fix(keycardai-mcp): retire the 2025-03-26 metadata rewrites (SDK-3) (#37)
+- MetadataApp no longer rewrites authorization_servers to the request origin
+for MCP-Protocol-Version: 2025-03-26 and no longer appends resource=<origin>
+to the proxied authorization_endpoint. Both documents match keycard-sdk-spec
+oauth-metadata-endpoints spec-version 2.
+- Co-authored-by: devin-ai-keycard <devin-ai@keycard.ai>
+Co-authored-by: Larry Osakwe <larry@keycard.ai>
+
+## 0.1.0-keycardai-mcp (2026-08-19)
+
+
+- feat(keycardai-mcp): Rack bearer middleware, metadata endpoints, AuthProvider grant (#8)
+- Phase 2: the MCP server integration at the Rack seam, implementing
+specs/server-bearer-auth/{bearer-token-verification-middleware,
+oauth-metadata-endpoints,route-level-auth-gating}.md and
+specs/delegated-access/grant-decorator.md:
+- - RequireBearerAuth: fail-closed Rack middleware; 401 RFC 6750
+  challenge with the RFC 9728 resource_metadata URL, 400 on malformed
+  headers, 401 invalid_token on non-bearer schemes (TS/Go position),
+  403 insufficient_scope on missing required_scopes (all-of; gating is
+  this middleware re-applied per route, the TS/Go idiom), verified
+  AccessToken in the Rack env, construction error on a nil verifier
+- MetadataApp: RFC 9728 protected-resource metadata with path
+  insertion, the 2025-03-26 MCP-version shim, RFC 8414 AS proxy with
+  the resource=<origin> rewrite (replace, not append), optional
+  /.well-known/jwks.json, permissive CORS + preflight, 502 on upstream
+  failure
+- AuthProvider: zone + credential holder; token_verifier with
+  multi-zone issuers inferred from a self-describing credential;
+  grant(resources, user_identifier:, request_scopes:) middleware that
+  fails fast 401 without a verified token, never aborts on per-resource
+  errors, and merges stacked grants into one AccessContext;
+  exchange_tokens + exchange_tokens_for_zone
+- Env accessors Keycardai::MCP.auth_info / .access_context
+- No MCP SDK dependency, per the plan: compatibility with the official
+mcp gem is proven by the phase 4 example server. Conformance suites map
+to all four spec Testing tables (28 examples).
