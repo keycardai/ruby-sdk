@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 # Conformance suite for keycard-sdk-spec
-# specs/server-bearer-auth/oauth-metadata-endpoints.md.
+# specs/server-bearer-auth/oauth-metadata-endpoints.md (spec-version 2).
 # Each example maps to a row of the spec's Unit Tests table.
 RSpec.describe Keycardai::MCP::MetadataApp do
   let(:zone) { MiniZone.new }
@@ -39,25 +39,26 @@ RSpec.describe Keycardai::MCP::MetadataApp do
     expect(document).to include("scopes_supported" => ["mcp:tools"], "resource_name" => "My Tool")
   end
 
-  it "3: the 2025-03-26 MCP protocol version rewrites authorization_servers to the request origin" do
-    response = app.call(rack_env(path: "/.well-known/oauth-protected-resource",
-                                 headers: { "MCP-Protocol-Version" => "2025-03-26" }))
+  it "3: MCP-Protocol-Version 2025-03-26 yields the same protected-resource document as no header" do
+    without_header = parse_body(app.call(rack_env(path: "/.well-known/oauth-protected-resource")))
+    with_header = parse_body(app.call(rack_env(path: "/.well-known/oauth-protected-resource",
+                                               headers: { "MCP-Protocol-Version" => "2025-03-26" })))
 
-    expect(parse_body(response)["authorization_servers"]).to eq(["https://tool.example.com"])
+    expect(with_header).to eq(without_header)
+    expect(with_header["authorization_servers"]).to eq([zone.issuer])
   end
 
-  it "4: the AS proxy returns the upstream document with resource=<origin> on the authorization_endpoint" do
-    existing = zone.metadata("authorization_endpoint" => "#{zone.issuer}/oauth/authorize?resource=stale&keep=1")
+  it "4: the AS proxy returns the upstream document unmodified, existing query included" do
+    endpoint = "#{zone.issuer}/oauth/authorize?resource=stale&keep=1"
+    existing = zone.metadata("authorization_endpoint" => endpoint)
     proxied = described_class.new(issuer: zone.issuer, http_client: upstream(existing))
 
     response = proxied.call(rack_env(path: "/.well-known/oauth-authorization-server"))
     document = parse_body(response)
 
     expect(response.first).to eq(200)
-    endpoint = URI(document["authorization_endpoint"])
-    params = URI.decode_www_form(endpoint.query).to_h
-    expect(params).to include("resource" => "https://tool.example.com", "keep" => "1")
-    expect(URI.decode_www_form(endpoint.query).count { |name, _| name == "resource" }).to eq(1)
+    expect(document).to eq(existing)
+    expect(document["authorization_endpoint"]).to eq(endpoint)
   end
 
   it "5: an upstream failure yields 502 Bad Gateway" do
