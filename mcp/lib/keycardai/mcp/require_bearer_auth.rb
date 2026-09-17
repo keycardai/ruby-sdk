@@ -9,7 +9,7 @@ module Keycardai
     # the Rack env (Keycardai::MCP.auth_info).
     #
     #   use Keycardai::MCP::RequireBearerAuth,
-    #       verifier: Keycardai::OAuth::TokenVerifier.new(issuers: zone_url),
+    #       verifier: Keycardai::OAuth::TokenVerifier.new(issuers: zone_url, audiences: resource_id),
     #       required_scopes: ["mcp:tools"]
     #
     # Route-level gating is this same middleware applied per route with a

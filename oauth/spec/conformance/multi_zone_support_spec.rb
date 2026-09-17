@@ -28,7 +28,8 @@ RSpec.describe "Multi-zone support" do
   end
 
   def verifier(http)
-    Keycardai::OAuth::TokenVerifier.new(issuers: [zone_a.issuer, zone_b.issuer], http_client: http)
+    Keycardai::OAuth::TokenVerifier.new(issuers: [zone_a.issuer, zone_b.issuer],
+                                        audiences: "https://api.acme.test", http_client: http)
   end
 
   it "1: a two-zone credential is self-describing and resolves per-zone credentials" do

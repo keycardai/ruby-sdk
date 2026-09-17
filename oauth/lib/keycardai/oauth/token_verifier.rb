@@ -77,7 +77,8 @@ module Keycardai
     class TokenVerifier
       # @param issuers [String, Array<String>] trusted zone issuer URL(s)
       # @param audiences [String, Array<String>, nil] when set, tokens must
-      #   carry an intersecting aud
+      #   carry an intersecting aud; when nil, the verifier accepts a token
+      #   minted for any resource in the zone and warns once at construction
       # @param http_client [#get] pluggable transport
       # @param key_ttl [Numeric] JWKS key cache lifetime in seconds
       # @param discovery_ttl [Numeric] jwks_uri cache lifetime in seconds
@@ -89,6 +90,12 @@ module Keycardai
                      fetch_timeout: JWKSKeyring::DEFAULT_FETCH_TIMEOUT, clock: -> { Time.now })
         @issuers = Array(issuers).reject { |issuer| issuer.nil? || issuer.empty? }
         raise ConfigurationError, "TokenVerifier requires at least one trusted issuer" if @issuers.empty?
+
+        if audiences.nil?
+          warn "Keycardai::OAuth::TokenVerifier has no audiences configured, so it accepts a token minted " \
+               "for any resource in the zone; pass audiences: with this server's registered resource identifier.",
+               uplevel: 1
+        end
 
         @audiences = audiences
         @clock = clock
