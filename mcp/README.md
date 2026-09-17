@@ -31,8 +31,11 @@ is proven by the example server in the repo's `examples/` directory.
 require "keycardai/mcp"
 
 zone_url = ENV.fetch("KEYCARD_URL")
+# This server's registered Resource identifier. Leaving audiences: unset
+# accepts tokens minted for any resource in the zone and warns once at boot.
+resource_id = ENV.fetch("KEYCARD_RESOURCE_ID")
 
-verifier = Keycardai::OAuth::TokenVerifier.new(issuers: zone_url)
+verifier = Keycardai::OAuth::TokenVerifier.new(issuers: zone_url, audiences: resource_id)
 metadata = Keycardai::MCP::MetadataApp.new(
   issuer: zone_url,
   resource_name: "mcp-server-ruby",

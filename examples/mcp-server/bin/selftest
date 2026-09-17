@@ -24,6 +24,7 @@ end
 zone_port = 9481
 server_port = 9482
 issuer = "http://127.0.0.1:#{zone_port}"
+resource_id = "http://127.0.0.1:#{server_port}/mcp"
 key = OpenSSL::PKey::RSA.new(2048)
 jwk = JWT::JWK.new(key.public_key, { kid: "kid-selftest", use: "sig", alg: "RS256" })
 
@@ -46,7 +47,7 @@ zone_thread = Thread.new { zone.start }
 
 # --- example server --------------------------------------------------------
 server_pid = spawn(
-  { "KEYCARD_URL" => issuer, "KEYCARD_RESOURCE_ID" => "mcp-server-ruby-selftest" },
+  { "KEYCARD_URL" => issuer, "KEYCARD_RESOURCE_ID" => resource_id },
   "bundle", "exec", "rackup", "-q", "-p", server_port.to_s, "-o", "127.0.0.1",
   chdir: File.expand_path("..", __dir__),
 )
@@ -68,8 +69,8 @@ begin
     JSON.parse(resource_doc.body)["authorization_servers"] == [issuer])
 
   as_doc = http.get("/.well-known/oauth-authorization-server")
-  check.call("AS metadata proxied with resource rewrite", as_doc.code == "200" &&
-    JSON.parse(as_doc.body)["authorization_endpoint"].include?("resource=http"))
+  check.call("AS metadata proxied unmodified", as_doc.code == "200" &&
+    JSON.parse(as_doc.body)["authorization_endpoint"] == "#{issuer}/oauth/authorize")
 
   bare = http.post("/mcp", JSON.dump({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
                    { "content-type" => "application/json" })
@@ -79,7 +80,7 @@ begin
 
   now = Time.now.to_i
   token = JWT.encode(
-    { "iss" => issuer, "sub" => "usr_selftest", "aud" => "http://127.0.0.1:#{server_port}",
+    { "iss" => issuer, "sub" => "usr_selftest", "aud" => resource_id,
       "exp" => now + 300, "iat" => now, "client_id" => "client_selftest", "scope" => "mcp:tools" },
     key, "RS256", { "kid" => "kid-selftest" }
   )
@@ -97,7 +98,7 @@ begin
     JSON.parse(call.body).dig("result", "content", 0, "text") == "Hello, Keycard!")
 
   wrong_scope_token = JWT.encode(
-    { "iss" => issuer, "sub" => "usr_selftest", "aud" => "x", "exp" => now + 300,
+    { "iss" => issuer, "sub" => "usr_selftest", "aud" => resource_id, "exp" => now + 300,
       "iat" => now, "client_id" => "client_selftest", "scope" => "other" },
     key, "RS256", { "kid" => "kid-selftest" }
   )

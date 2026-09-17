@@ -1,14 +1,49 @@
 # frozen_string_literal: true
 
+require "jwt"
+require "openssl"
+
 # Conformance suite for keycard-sdk-spec
-# specs/server-bearer-auth/bearer-token-verification-middleware.md.
-# Each example maps to a row of the spec's Unit Tests table.
+# specs/server-bearer-auth/bearer-token-verification-middleware.md
+# (spec-version 2). Each example maps to a row of the spec's Unit Tests table;
+# rows 7 and 8 use a real TokenVerifier over an in-memory zone because they
+# exercise construction and audience binding, which the FakeVerifier elides.
 RSpec.describe Keycardai::MCP::RequireBearerAuth do
   let(:probe) { ProbeApp.new }
   let(:verifier) { FakeVerifier.new("at_valid" => access_token) }
 
   def middleware(**options)
     described_class.new(probe, verifier: verifier, **options)
+  end
+
+  # A zone with one RSA key, its JWKS served through the fake transport, and a
+  # token minted for a resource other than this server.
+  let(:zone_issuer) { "https://acme.test" }
+  let(:zone_key) { OpenSSL::PKey::RSA.new(2048) }
+  let(:zone_http) do
+    jwk = JWT::JWK.new(zone_key.public_key, { kid: "kid-1", use: "sig", alg: "RS256" })
+    jwks = { "keys" => [jwk.export.transform_keys(&:to_s)] }
+    FakeHTTPClient.new do |url, _params|
+      case url
+      when "#{zone_issuer}/.well-known/oauth-authorization-server"
+        http_json({ "issuer" => zone_issuer, "jwks_uri" => "#{zone_issuer}/.well-known/jwks.json",
+                    "token_endpoint" => "#{zone_issuer}/oauth/token" })
+      when "#{zone_issuer}/.well-known/jwks.json"
+        http_json(jwks)
+      else
+        http_json({}, status: 404)
+      end
+    end
+  end
+  let(:foreign_resource_token) do
+    claims = { "iss" => zone_issuer, "sub" => "usr_123", "aud" => "https://other.example.com",
+               "exp" => Time.now.to_i + 300, "iat" => Time.now.to_i,
+               "client_id" => "client_abc", "scope" => "mcp:tools" }
+    JWT.encode(claims, zone_key, "RS256", { "kid" => "kid-1" })
+  end
+
+  def real_verifier(**options)
+    Keycardai::OAuth::TokenVerifier.new(issuers: zone_issuer, http_client: zone_http, **options)
   end
 
   it "1: a missing Authorization header yields 401 with a resource_metadata challenge" do
@@ -84,6 +119,32 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
 
     expect(status).to eq(403)
     expect(headers["www-authenticate"]).to include('error="insufficient_scope"', "resource_metadata=")
+    expect(probe.ran?).to be(false)
+  end
+
+  it "7: a verifier built without an audience warns once naming audiences:, " \
+     "and accepts a token minted for another resource" do
+    unbound = nil
+    expect { unbound = real_verifier }
+      .to output(/warning: .*has no audiences configured.*pass audiences:/).to_stderr
+    gated = described_class.new(probe, verifier: unbound)
+
+    status, = gated.call(rack_env(headers: { "Authorization" => "Bearer #{foreign_resource_token}" }))
+
+    expect(status).to eq(200)
+    expect(Keycardai::MCP.auth_info(probe.seen_env).audiences).to eq(["https://other.example.com"])
+  end
+
+  it "8: a verifier built with an audience emits no warning, " \
+     "and a token minted for another resource is 401 invalid_token" do
+    bound = nil
+    expect { bound = real_verifier(audiences: "https://tool.example.com") }.not_to output.to_stderr
+    gated = described_class.new(probe, verifier: bound)
+
+    status, headers, = gated.call(rack_env(headers: { "Authorization" => "Bearer #{foreign_resource_token}" }))
+
+    expect(status).to eq(401)
+    expect(headers["www-authenticate"]).to include('error="invalid_token"')
     expect(probe.ran?).to be(false)
   end
 
