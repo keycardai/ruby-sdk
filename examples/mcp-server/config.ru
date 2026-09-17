@@ -10,9 +10,12 @@ require "keycardai/mcp"
 require "mcp"
 
 KEYCARD_URL = ENV.fetch("KEYCARD_URL") { abort("KEYCARD_URL is required (the zone issuer URL)") }
-RESOURCE_ID = ENV.fetch("KEYCARD_RESOURCE_ID", "mcp-server-ruby")
+SERVER_NAME = "mcp-server-ruby"
+# The registered Resource identifier, e.g. http://localhost:8000/mcp. When set,
+# the verifier rejects tokens minted for any other resource.
+RESOURCE_ID = ENV.fetch("KEYCARD_RESOURCE_ID", nil)
 
-mcp_server = MCP::Server.new(name: RESOURCE_ID, version: "0.1.0")
+mcp_server = MCP::Server.new(name: SERVER_NAME, version: "0.1.0")
 mcp_server.define_tool(
   name: "hello",
   description: "Say hello from a Keycard-protected MCP server",
@@ -21,10 +24,10 @@ mcp_server.define_tool(
   MCP::Tool::Response.new([{ type: "text", text: "Hello, #{name}!" }])
 end
 
-verifier = Keycardai::OAuth::TokenVerifier.new(issuers: KEYCARD_URL)
+verifier = Keycardai::OAuth::TokenVerifier.new(issuers: KEYCARD_URL, audiences: RESOURCE_ID)
 metadata = Keycardai::MCP::MetadataApp.new(
   issuer: KEYCARD_URL,
-  resource_name: RESOURCE_ID,
+  resource_name: SERVER_NAME,
   scopes_supported: ["mcp:tools"],
 )
 

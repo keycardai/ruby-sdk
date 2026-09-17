@@ -10,13 +10,13 @@ is plain Rack, and the official gem mounts behind it untouched.
 
 ```sh
 bundle install
-KEYCARD_URL=https://<your-zone>.keycard.cloud bundle exec rackup -p 8000
+KEYCARD_URL=https://<your-zone>.keycard.cloud KEYCARD_RESOURCE_ID=http://localhost:8000/mcp bundle exec rackup -p 8000
 ```
 
 | Env var | Meaning |
 | --- | --- |
 | `KEYCARD_URL` | The zone issuer URL (required) |
-| `KEYCARD_RESOURCE_ID` | Resource name advertised in metadata (default `mcp-server-ruby`) |
+| `KEYCARD_RESOURCE_ID` | The registered Resource identifier, e.g. `http://localhost:8000/mcp`. When set, tokens minted for any other resource are rejected. |
 
 Endpoints: `GET /healthz`, `GET /.well-known/oauth-protected-resource`,
 `GET /.well-known/oauth-authorization-server` (proxied from the zone),
