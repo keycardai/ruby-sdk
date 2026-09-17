@@ -15,6 +15,26 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.5.1-keycardai-oauth (2026-09-17)
+
+
+- fix(keycardai-oauth): warn once when a TokenVerifier is built without audiences (SDK-4) (#39)
+- * fix(keycardai-oauth): warn once when a TokenVerifier is built without audiences (SDK-4)
+- Co-Authored-By: Larry Osakwe <larry@keycard.ai>
+- * fix(keycardai-oauth): bind the example server's verifier to KEYCARD_RESOURCE_ID
+- The example used KEYCARD_RESOURCE_ID as a display name and built its verifier
+without audiences. It now keeps SERVER_NAME for display, passes the resource
+identifier as audiences, and its selftest mints tokens for that identifier,
+sends the wrong-scope token with the right aud so it reaches the scope check,
+and asserts the proxied authorization_endpoint passes through unmodified
+(the resource= rewrite it still expected was retired in #37).
+- Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+- ---------
+- Co-authored-by: devin-ai-keycard <devin-ai@keycard.ai>
+Co-authored-by: Larry Osakwe <larry@keycard.ai>
+Co-authored-by: Larry-Osakwe <larryosak@gmail.com>
+Co-authored-by: Claude Fable 5.1 <noreply@anthropic.com>
+
 ## 0.5.0-keycardai-oauth (2026-09-08)
 
 
