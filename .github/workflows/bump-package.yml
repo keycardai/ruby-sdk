@@ -72,7 +72,7 @@ jobs:
           token: ${{ steps.generate-token.outputs.token }}
           fetch-depth: 0
 
-      - run: pip install commitizen
+      - run: pip install commitizen==4.19.2
 
       - name: Bump ${{ inputs.package_name }}
         env:
