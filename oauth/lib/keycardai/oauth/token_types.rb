@@ -15,6 +15,7 @@ module Keycardai
     module GrantType
       CLIENT_CREDENTIALS = "client_credentials"
       AUTHORIZATION_CODE = "authorization_code"
+      REFRESH_TOKEN = "refresh_token"
       TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange"
     end
 
