@@ -75,5 +75,46 @@ module Keycardai
 
       TokenRequests.parse_response(http_client.post_form(endpoint, params, headers: headers, timeout: timeout))
     end
+
+    # Redeem a refresh token for a new access token (RFC 6749 §6). Client
+    # authentication follows the code exchange: a confidential client
+    # authenticates with HTTP Basic and omits client_id from the body, a public
+    # client carries client_id in the body. The gem keeps no state: when the
+    # response carries a refresh_token the server rotated it, and the caller
+    # stores it in place of the old one.
+    #
+    # @param issuer [String] the zone's issuer URL; supplies the token endpoint
+    # @param refresh_token [String] the refresh token from an earlier token response
+    # @param client_id [String]
+    # @param client_secret [String, nil] confidential-client secret
+    # @param resources [Array<String>] RFC 8707 resource indicators, one resource
+    #   parameter per entry
+    # @param scopes [Array<String>] scopes to request, space-joined into scope
+    # @param http_client [#get, #post_form] pluggable transport
+    # @param timeout [Numeric, nil]
+    # @return [TokenResponse]
+    # @raise [OAuthError] an RFC 6749 §5.2 error response; error == "invalid_grant"
+    #   means the refresh token is expired, revoked, or unknown and the user must
+    #   authorize again
+    # @raise [HTTPError] a non-2xx response with no OAuth error body (5xx, 429)
+    # @raise [NetworkError, ProtocolError]
+    def self.refresh_authorization(issuer, refresh_token:, client_id:, client_secret: nil, resources: [],
+                                   scopes: [], http_client: HTTP::NetHTTPClient.new, timeout: nil)
+      metadata = fetch_authorization_server_metadata(issuer, http_client: http_client, timeout: timeout)
+      endpoint = metadata.token_endpoint ||
+                 raise(ProtocolError.new("metadata for #{issuer} has no token_endpoint", code: "invalid_metadata"))
+
+      params = {
+        "grant_type" => GrantType::REFRESH_TOKEN,
+        "refresh_token" => refresh_token,
+        "client_id" => client_secret ? nil : client_id,
+        "scope" => Array(scopes).empty? ? nil : Array(scopes).join(" ")
+      }.compact
+      params = params.to_a + Array(resources).map { |resource| ["resource", resource] }
+      headers = { "Accept" => "application/json" }
+      headers["Authorization"] = HTTP.basic_authorization(client_id, client_secret) if client_secret
+
+      TokenRequests.parse_response(http_client.post_form(endpoint, params, headers: headers, timeout: timeout))
+    end
   end
 end

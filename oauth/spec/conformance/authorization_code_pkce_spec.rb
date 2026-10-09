@@ -5,7 +5,8 @@
 # maps to a row of the spec's Unit Tests table. The high-level authenticate
 # loopback flow is covered by the spec's integration table only. Rows 8 to 11
 # belong to the two-call web-app flow, which this gem does not ship; rows 12 to
-# 14 are pinned on the building blocks that flow composes.
+# 14 are pinned on the building blocks that flow composes. Row 15 is the
+# refresh step, hosted as refresh_authorization.
 RSpec.describe "Authorization code with PKCE" do
   let(:zone) { ZoneFixture.new }
   let(:token_payload) { { "access_token" => "at_user", "token_type" => "Bearer" } }
@@ -148,5 +149,60 @@ RSpec.describe "Authorization code with PKCE" do
   it "rejects a client_secret without a client_id" do
     expect { exchange(token_http, client_secret: "csecret") }
       .to raise_error(Keycardai::OAuth::ConfigurationError)
+  end
+  def refresh(http, **options)
+    Keycardai::OAuth.refresh_authorization(zone.issuer, refresh_token: "rt1", client_id: "cid", http_client: http,
+                                                        **options)
+  end
+
+  it "15: a public client refreshes with grant_type, refresh_token, and client_id in the body" do
+    http = token_http
+    refresh(http)
+
+    call = token_call(http)
+    expect(call.params.to_h).to include("grant_type" => "refresh_token", "refresh_token" => "rt1",
+                                        "client_id" => "cid")
+    expect(call.headers).not_to have_key("Authorization")
+    expect(call.params.to_h).not_to have_key("scope")
+  end
+
+  it "15: a confidential client refreshes with HTTP Basic and no client_id in the body" do
+    http = token_http
+    refresh(http, client_secret: "csecret")
+
+    call = token_call(http)
+    expect(call.headers["Authorization"]).to eq("Basic #{["cid:csecret"].pack("m0")}")
+    expect(call.params.to_h).not_to have_key("client_id")
+  end
+
+  it "15: sends one resource parameter per entry and space-joins scopes" do
+    http = token_http
+    refresh(http, resources: ["https://a.acme.test", "https://b.acme.test"], scopes: %w[read write])
+
+    params = token_call(http).params
+    expect(params.filter_map { |key, value| value if key == "resource" }).to eq(["https://a.acme.test", "https://b.acme.test"])
+    expect(params.to_h["scope"]).to eq("read write")
+  end
+
+  it "15: returns the rotated refresh token, nil when the server kept the old one" do
+    rotated = refresh(token_http({ "access_token" => "at2", "token_type" => "Bearer", "refresh_token" => "rt2" }))
+    expect(rotated.access_token).to eq("at2")
+    expect(rotated.refresh_token).to eq("rt2")
+
+    expect(refresh(token_http).refresh_token).to be_nil
+  end
+
+  it "15: invalid_grant is an OAuthError carrying the code" do
+    http = token_http({ "error" => "invalid_grant", "error_description" => "expired" }, status: 400)
+
+    expect { refresh(http) }.to raise_error(Keycardai::OAuth::OAuthError) { |e|
+      expect(e.error).to eq("invalid_grant")
+    }
+  end
+
+  it "15: a 5xx with no OAuth body raises HTTPError" do
+    http = token_http({}, status: 503)
+
+    expect { refresh(http) }.to raise_error(Keycardai::OAuth::HTTPError) { |e| expect(e.status).to eq(503) }
   end
 end

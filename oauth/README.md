@@ -104,6 +104,26 @@ issuer's `userinfo_endpoint` rather than in the token. Pass `metadata:` to reuse
 metadata you already discovered; nothing is cached, because group membership can
 change server-side.
 
+### Refresh a stored grant
+
+A token response from the authorization-code flow may carry a `refresh_token`.
+Redeem it with `refresh_authorization`, which authenticates the client the way
+`exchange_authorization_code` does. The gem keeps no state: when the response
+carries a new `refresh_token`, the server rotated it and you store it in place
+of the old one. `OAuthError` with `error == "invalid_grant"` means the user must
+authorize again.
+
+```ruby
+token = Keycardai::OAuth.refresh_authorization(
+  "https://your-zone.keycard.cloud",
+  refresh_token: stored_refresh_token,
+  client_id: ENV.fetch("KEYCARD_CLIENT_ID"),
+  client_secret: ENV["KEYCARD_CLIENT_SECRET"], # omit for a public client
+  resources: ["https://api.acme.test"],
+)
+stored_refresh_token = token.refresh_token if token.refresh_token
+```
+
 ### Act as a named user
 
 ```ruby
