@@ -15,6 +15,12 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.6.0-keycardai-oauth (2026-10-09)
+
+
+- feat(keycardai-oauth): refresh a grant from the authorization-code flow (SDK-15) (#42)
+- Adds Keycardai::OAuth.refresh_authorization(issuer, refresh_token:, client_id:, client_secret:, resources:, scopes:), the refresh step from authorization-code-pkce.md spec-version 4. Client authentication follows exchange_authorization_code: HTTP Basic with no body client_id for a confidential client, body client_id for a public one. A rotated refresh_token comes back on the TokenResponse for the caller to store; invalid_grant raises OAuthError and means the user must authorize again.
+
 ## 0.5.1-keycardai-oauth (2026-09-17)
 
 
