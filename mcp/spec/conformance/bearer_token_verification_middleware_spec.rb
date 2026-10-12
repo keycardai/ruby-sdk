@@ -148,6 +148,106 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
     expect(probe.ran?).to be(false)
   end
 
+  # Infrastructure failures: the zone's keys or metadata could not be fetched,
+  # so the token was never judged. 503 with no challenge, so the client keeps
+  # its token and retries instead of signing in again.
+  def failing_zone(jwks_status: nil, discovery_status: nil, raise_on: nil)
+    FakeHTTPClient.new do |url, _params|
+      raise Keycardai::OAuth::NetworkError, "connection refused" if raise_on && url.include?(raise_on)
+
+      case url
+      when "#{zone_issuer}/.well-known/oauth-authorization-server"
+        next http_json({}, status: discovery_status) if discovery_status
+
+        http_json({ "issuer" => zone_issuer, "jwks_uri" => "#{zone_issuer}/.well-known/jwks.json",
+                    "token_endpoint" => "#{zone_issuer}/oauth/token" })
+      when "#{zone_issuer}/.well-known/jwks.json"
+        http_json({ "keys" => [] }, status: jwks_status || 200)
+      else
+        http_json({}, status: 404)
+      end
+    end
+  end
+
+  def zone_token(kid: "kid-1")
+    claims = { "iss" => zone_issuer, "sub" => "usr_123", "aud" => "https://tool.example.com",
+               "exp" => Time.now.to_i + 300, "iat" => Time.now.to_i,
+               "client_id" => "client_abc", "scope" => "mcp:tools" }
+    JWT.encode(claims, zone_key, "RS256", { "kid" => kid })
+  end
+
+  def bearer_env(token)
+    rack_env(headers: { "Authorization" => "Bearer #{token}" })
+  end
+
+  def unavailable_middleware(http)
+    verifier = Keycardai::OAuth::TokenVerifier.new(issuers: zone_issuer, audiences: "https://tool.example.com",
+                                                   http_client: http)
+    described_class.new(probe, verifier: verifier)
+  end
+
+  shared_examples "temporarily unavailable" do
+    it "answers 503 temporarily_unavailable with no challenge and does not run the app" do
+      status, headers, body = unavailable_middleware(http).call(bearer_env(zone_token))
+
+      expect(status).to eq(503)
+      expect(headers).not_to have_key("www-authenticate")
+      expect(JSON.parse(body.join)).to eq({ "error" => "temporarily_unavailable" })
+      expect(probe.ran?).to be(false)
+    end
+  end
+
+  context "when the JWKS fetch returns an error status (JWKSFetchError)" do
+    let(:http) { failing_zone(jwks_status: 503) }
+    include_examples "temporarily unavailable"
+  end
+
+  context "when the JWKS fetch fails at the transport (JWKSFetchError wrapping NetworkError)" do
+    let(:http) { failing_zone(raise_on: "jwks.json") }
+    include_examples "temporarily unavailable"
+  end
+
+  context "when authorization-server discovery returns an error status (JWKSDiscoveryError wrapping HTTPError)" do
+    let(:http) { failing_zone(discovery_status: 500) }
+    include_examples "temporarily unavailable"
+  end
+
+  context "when authorization-server discovery fails at the transport (JWKSDiscoveryError wrapping NetworkError)" do
+    let(:http) { failing_zone(raise_on: "oauth-authorization-server") }
+    include_examples "temporarily unavailable"
+  end
+
+  it "a kid absent from a JWKS that loaded is an invalid token: 401 invalid_token with a challenge" do
+    jwk = JWT::JWK.new(zone_key.public_key, { kid: "kid-1", use: "sig", alg: "RS256" })
+    http = FakeHTTPClient.new do |url, _params|
+      case url
+      when "#{zone_issuer}/.well-known/oauth-authorization-server"
+        http_json({ "issuer" => zone_issuer, "jwks_uri" => "#{zone_issuer}/.well-known/jwks.json",
+                    "token_endpoint" => "#{zone_issuer}/oauth/token" })
+      when "#{zone_issuer}/.well-known/jwks.json"
+        http_json({ "keys" => [jwk.export.transform_keys(&:to_s)] })
+      end
+    end
+
+    status, headers, = unavailable_middleware(http).call(bearer_env(zone_token(kid: "kid-rotated")))
+
+    expect(status).to eq(401)
+    expect(headers["www-authenticate"]).to include('error="invalid_token"')
+    expect(probe.ran?).to be(false)
+  end
+
+  it "a token that fails signature verification against loaded keys is 401 invalid_token" do
+    other_key = OpenSSL::PKey::RSA.new(2048)
+    claims = { "iss" => zone_issuer, "sub" => "usr_123", "aud" => "https://tool.example.com",
+               "exp" => Time.now.to_i + 300, "iat" => Time.now.to_i, "client_id" => "client_abc" }
+    forged = JWT.encode(claims, other_key, "RS256", { "kid" => "kid-1" })
+
+    status, headers, = unavailable_middleware(zone_http).call(bearer_env(forged))
+
+    expect(status).to eq(401)
+    expect(headers["www-authenticate"]).to include('error="invalid_token"')
+  end
+
   it "rejects construction without a verifier" do
     expect { described_class.new(probe, verifier: nil) }
       .to raise_error(Keycardai::OAuth::ConfigurationError)

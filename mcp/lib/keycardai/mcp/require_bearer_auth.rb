@@ -49,6 +49,9 @@ module Keycardai
 
       def authorize(env, token)
         access_token, failure = verify(token)
+        if failure == :unavailable
+          return RackSupport.json_response({ "error" => "temporarily_unavailable" }, status: 503)
+        end
         return RackSupport.challenge_response(env, status: 401, error: "invalid_token", description: failure) if failure
 
         missing = @required_scopes - access_token.scopes
@@ -61,8 +64,21 @@ module Keycardai
         @app.call(env)
       end
 
+      # The zone's signing keys or its authorization-server metadata could not
+      # be fetched, so verification never completed. Answered 503 with no
+      # challenge: the token was not judged, and the client should retry.
+      # A kid absent from a JWKS that did load (JWKSKeyNotFoundError) is an
+      # invalid token and keeps the 401 path.
+      UNAVAILABLE_ERRORS = [
+        Keycardai::OAuth::JWKSFetchError, Keycardai::OAuth::JWKSDiscoveryError,
+        Keycardai::OAuth::HTTPError, Keycardai::OAuth::NetworkError
+      ].freeze
+      private_constant :UNAVAILABLE_ERRORS
+
       def verify(token)
         [@verifier.verify_token(token), nil]
+      rescue *UNAVAILABLE_ERRORS
+        [nil, :unavailable]
       rescue Keycardai::Error => e
         [nil, e.message]
       end
