@@ -14,6 +14,12 @@ protected-resource with path insertion, an RFC 8414 authorization-server proxy,
 and JWKS), and an AuthProvider whose `grant` middleware exchanges the caller's
 token per resource into an AccessContext. Wraps no MCP SDK.
 
+## 0.1.2-keycardai-mcp (2026-10-12)
+
+
+- fix(keycardai-mcp): RequireBearerAuth answers 503 when the zone's signing keys can't be fetched (SDK-20) (#44)
+- RequireBearerAuth answers 503 {"error":"temporarily_unavailable"} with no challenge when verification fails with JWKSFetchError, JWKSDiscoveryError, HTTPError, or NetworkError, because the token was never judged. A kid absent from a JWKS that loaded, and any other invalid token, stays 401 invalid_token.
+
 ## 0.1.1-keycardai-mcp (2026-09-16)
 
 
