@@ -9,9 +9,8 @@ Agent-to-agent delegation for Ruby agents on the Keycard platform.
 bundle add keycardai-a2a
 ```
 
-Implements the delegation contract from
-[keycard-sdk-spec](https://github.com/keycardai/keycard-sdk-spec)
-(`specs/a2a/a2a-delegation.md`):
+Implements the Keycard A2A delegation contract, the same one the Python, TypeScript
+and Go SDKs implement:
 
 1. **Discover**: fetch and cache the target agent's card from
    `/.well-known/agent-card.json`

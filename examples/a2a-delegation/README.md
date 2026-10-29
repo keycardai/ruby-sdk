@@ -1,8 +1,6 @@
 # a2a-delegation example
 
-Two agents demonstrating the A2A delegation contract from
-[keycard-sdk-spec](https://github.com/keycardai/keycard-sdk-spec)
-(`specs/a2a/a2a-delegation.md`): one agent calls another **on the user's
+Two agents demonstrating the Keycard A2A delegation contract: one agent calls another **on the user's
 behalf**, and the user's identity survives the hop.
 
 - **`agent_b.ru`**, the downstream agent. Publishes its agent card at
