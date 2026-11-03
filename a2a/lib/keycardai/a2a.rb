@@ -13,8 +13,6 @@ module Keycardai
   # to the target (RFC 8693; the user stays the subject, the authorization
   # server records the caller in the token's act chain), and invoke the target
   # over JSON-RPC.
-  #
-  # Contract: https://github.com/keycardai/keycard-sdk-spec
   module A2A
     # Well-known path of an agent's card, relative to its base URL.
     AGENT_CARD_PATH = "/.well-known/agent-card.json"

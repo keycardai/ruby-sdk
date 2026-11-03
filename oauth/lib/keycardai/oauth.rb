@@ -33,8 +33,6 @@ module Keycardai
   # (RFC 7591), authorization server discovery (RFC 8414), UserInfo (OIDC Core
   # 1.0 §5.3), JWT/JWKS verification, application credentials, and
   # AccessContext.
-  #
-  # Contract: https://github.com/keycardai/keycard-sdk-spec
   module OAuth
   end
 end
