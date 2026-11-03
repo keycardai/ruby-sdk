@@ -11,7 +11,7 @@ OAuth 2.0 primitives for the Keycard platform. The foundation gem of the
 bundle add keycardai-oauth
 ```
 
-Capabilities (per [keycard-sdk-spec](https://github.com/keycardai/keycard-sdk-spec)):
+Capabilities:
 
 - Token exchange and impersonation (RFC 8693)
 - Client credentials grant (RFC 6749 §4.4)

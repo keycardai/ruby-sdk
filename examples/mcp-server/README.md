@@ -31,8 +31,8 @@ Endpoints: `GET /healthz`, `GET /.well-known/oauth-protected-resource`,
   stub zone (real RSA key, discovery + JWKS), boots this server against it,
   and drives the full flow including a signed token calling the `hello` tool,
   a 401 challenge, and a 403 insufficient_scope rejection.
-- `bin/live-e2e`: runs the Integration Tests rows from keycard-sdk-spec
-  against a real zone. Every block is guarded, so a partial config runs what
+- `bin/live-e2e`: runs the shared contract's Integration Tests rows against a
+  real zone. Every block is guarded, so a partial config runs what
   it can and reports the rest as SKIP with the reason. Reads `KEYCARD_URL`,
   `KEYCARD_CLIENT_ID`, `KEYCARD_CLIENT_SECRET`, `KEYCARD_RESOURCE_ID`, and
   `KEYCARD_IMPERSONATE_USER` from the environment or a gitignored `.env` here.

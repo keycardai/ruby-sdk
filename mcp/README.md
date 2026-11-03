@@ -9,7 +9,7 @@ Keycard integration for MCP servers in Ruby, attached at the Rack seam.
 bundle add keycardai-mcp
 ```
 
-What it ships (per [keycard-sdk-spec](https://github.com/keycardai/keycard-sdk-spec)):
+What it ships:
 
 - Bearer-token verification middleware: fail-closed 401 with an RFC 6750
   `WWW-Authenticate` challenge advertising `resource_metadata`

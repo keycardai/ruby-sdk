@@ -1,9 +1,7 @@
 # Keycard Ruby SDK
 
-> The parity contract these gems implement lives in
-> [keycard-sdk-spec](https://github.com/keycardai/keycard-sdk-spec), and where
-> this SDK stands against it is in
-> [docs/conformance-report.md](docs/conformance-report.md).
+> These gems implement the shared Keycard SDK contract; where this SDK stands
+> against it is in [docs/conformance-report.md](docs/conformance-report.md).
 
 Ruby SDK for the Keycard agentic identity platform, at contract parity with the
 [Python](https://github.com/keycardai/python-sdk),
@@ -45,8 +43,8 @@ bundle exec rake spec     # specs only
 bundle exec rake rubocop  # lint only
 ```
 
-Specs are organized as the conformance suite: each capability spec in
-keycard-sdk-spec maps to a `spec/conformance/<spec-slug>_spec.rb` implementing
+Specs are organized as the conformance suite: each capability of the
+shared contract maps to a `spec/conformance/<spec-slug>_spec.rb` implementing
 its Testing tables.
 
 Design decisions and the Ruby idiom profile are in
