@@ -3,7 +3,9 @@
 require "tmpdir"
 
 # Conformance suite for keycard-sdk-spec specs/application-credentials/web-identity.md.
-# Each example maps to a row of the spec's Unit Tests table.
+# Each example maps to a row of the spec's Unit Tests table. Rows 8 and 9 do
+# not apply: the Ruby credential requires client_id at construction and has
+# no audience_config.
 RSpec.describe Keycardai::OAuth::WebIdentity do
   around do |example|
     Dir.mktmpdir { |dir| @storage_dir = dir and example.run }
@@ -79,6 +81,35 @@ RSpec.describe Keycardai::OAuth::WebIdentity do
     signature += "=" * ((4 - (signature.length % 4)) % 4)
     expect(verify_key.verify(OpenSSL::Digest.new("SHA256"), signature.unpack1("m0"), signing_input)).to be(true)
     expect(subject.client_jwks_url("https://tool.example.com/")).to eq("https://tool.example.com/.well-known/jwks.json")
+  end
+
+  it "7: client authentication for the device authorization endpoint signs an assertion with that aud" do
+    now = Time.at(1_753_920_000)
+    endpoint = "https://acme.test/oauth/device_authorization"
+    auth = credential(clock: -> { now }).client_authentication(issuer: "https://acme.test", endpoint: endpoint)
+
+    expect(auth.headers).to eq({})
+    expect(auth.params.keys).to eq(%w[client_assertion client_assertion_type])
+    expect(auth.params["client_assertion_type"]).to eq("urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
+    header, claims = auth.params["client_assertion"].split(".").first(2).map { |part| decode_jwt_part(part) }
+    expect(header).to include("alg" => "RS256", "kid" => "test-key")
+    expect(claims).to include("iss" => "client_abc", "sub" => "client_abc", "aud" => endpoint,
+                              "iat" => now.to_i, "exp" => now.to_i + 300)
+  end
+
+  it "7: each client authentication call signs a new assertion with a new jti" do
+    subject = credential
+    jtis = Array.new(2) do
+      assertion = subject.client_authentication(issuer: nil, endpoint: token_endpoint).params["client_assertion"]
+      decode_jwt_part(assertion.split(".")[1]).fetch("jti")
+    end
+
+    expect(jtis.uniq.size).to eq(2)
+  end
+
+  it "requires the endpoint for client authentication" do
+    expect { credential.client_authentication(issuer: nil, endpoint: nil) }
+      .to raise_error(Keycardai::OAuth::ConfigurationError, /endpoint/)
   end
 
   it "requires a client_id at construction" do

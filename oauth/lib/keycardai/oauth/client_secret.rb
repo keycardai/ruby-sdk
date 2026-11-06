@@ -8,7 +8,7 @@ module Keycardai
     # hold a long-lived secret.
     #
     # Implements the Credential interface: authorization_header(issuer:) plus
-    # prepare_token_exchange_request. Never reads environment variables; the
+    # prepare_token_exchange_request, and client_authentication. Never reads environment variables; the
     # caller sources the secret from its own config or secret manager.
     #
     # Single zone:
@@ -60,6 +60,17 @@ module Keycardai
       def authorization_header(issuer: nil)
         client_id, client_secret = resolve_pair(issuer)
         HTTP.basic_authorization(client_id, client_secret)
+      end
+
+      # Client authentication for one request: the Basic header and no form
+      # fields.
+      #
+      # @param issuer [String, nil] the target zone; required for multi-zone
+      # @param endpoint [String] the URL the request goes to; unused here
+      # @return [ClientAuthentication]
+      # @raise [ConfigurationError] multi-zone lookup for an unconfigured zone
+      def client_authentication(issuer:, endpoint:)
+        ClientAuthentication.new(headers: { "Authorization" => authorization_header(issuer: issuer) })
       end
 
       # Build the token-exchange form parameters. Client authentication rides
