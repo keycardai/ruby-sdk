@@ -75,13 +75,19 @@ RSpec.describe Keycardai::OAuth::HTTP::NetHTTPClient do
     expect(sessions.map { |s| s.requests.size }).to eq([1, 1])
   end
 
-  it "applies the timeout per request and restores the defaults when absent" do
+  it "applies the timeout per request and restores the 10 second default when absent" do
     client.get("https://zone.example/a", timeout: 2.5)
     session = sessions.first
     expect([session.open_timeout, session.read_timeout]).to eq([2.5, 2.5])
 
     client.get("https://zone.example/b")
-    expect([session.open_timeout, session.read_timeout]).to eq([60, 60])
+    expect([session.open_timeout, session.read_timeout]).to eq([10, 10])
+  end
+
+  it "a request with no timeout never inherits Net::HTTP's 60 second default" do
+    client.get("https://zone.example/a")
+    session = sessions.first
+    expect([session.open_timeout, session.read_timeout]).to eq([10, 10])
   end
 
   it "close finishes sessions and the next request opens a fresh one" do
