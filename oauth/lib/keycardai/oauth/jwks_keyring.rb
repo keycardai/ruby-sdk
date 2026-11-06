@@ -21,23 +21,31 @@ module Keycardai
       DEFAULT_KEY_TTL = 300
       DEFAULT_DISCOVERY_TTL = 3600
       DEFAULT_FETCH_TIMEOUT = 10
+      # Shortest interval between two JWKS fetches for one jwks_uri caused by a
+      # kid the cached key set does not hold. The checks before the key lookup
+      # read the unsigned token, so a forged token can name any kid.
+      DEFAULT_REFETCH_COOLDOWN = 30
       MAX_CACHED_KEYS = 256
 
       # @param http_client [#get] pluggable transport (see HTTP::NetHTTPClient)
       # @param key_ttl [Numeric] per-key cache lifetime in seconds
       # @param discovery_ttl [Numeric] jwks_uri cache lifetime in seconds
       # @param fetch_timeout [Numeric] timeout for discovery and JWKS fetches
+      # @param refetch_cooldown [Numeric] seconds before a kid missing from the
+      #   cached key set triggers another fetch; 0 fetches on every miss
       # @param clock [#call] returns the current Time; override in tests
       def initialize(http_client: HTTP::NetHTTPClient.new, key_ttl: DEFAULT_KEY_TTL,
                      discovery_ttl: DEFAULT_DISCOVERY_TTL, fetch_timeout: DEFAULT_FETCH_TIMEOUT,
-                     clock: -> { Time.now })
+                     refetch_cooldown: DEFAULT_REFETCH_COOLDOWN, clock: -> { Time.now })
         @http_client = http_client
         @key_ttl = key_ttl
         @discovery_ttl = discovery_ttl
         @fetch_timeout = fetch_timeout
+        @refetch_cooldown = refetch_cooldown
         @clock = clock
         @keys = {}
         @discovery = {}
+        @key_sets = {} # jwks_uri => { keys:, fetched_at: }
         @issuer_locks = {}
         @mutex = Mutex.new
       end
@@ -69,10 +77,12 @@ module Keycardai
         @mutex.synchronize do
           if issuer
             @keys.delete_if { |(cached_issuer, _), _| cached_issuer == issuer }
-            @discovery.delete(issuer)
+            entry = @discovery.delete(issuer)
+            @key_sets.delete(entry[:jwks_uri]) if entry
           else
             @keys.clear
             @discovery.clear
+            @key_sets.clear
           end
         end
       end
@@ -93,12 +103,39 @@ module Keycardai
 
       def resolve(issuer, kid)
         jwks_uri = resolve_jwks_uri(issuer)
-        jwk = fetch_jwks(jwks_uri).find { |candidate| candidate["kid"] == kid }
-        raise JWKSKeyNotFoundError, "kid #{kid.inspect} not found in JWKS for #{issuer}" unless jwk
+        jwk = key_from_set(issuer, kid, jwks_uri)
 
         key = import_key(jwk)
         cache_key(issuer, kid, key)
         key
+      end
+
+      # The cached key set first: a kid it holds imports with no fetch, and a kid
+      # it lacks refetches at most once per cooldown, so a rotated-in key is found
+      # once the cooldown has passed.
+      def key_from_set(issuer, kid, jwks_uri)
+        cached = fresh_key_set(jwks_uri)
+        if cached
+          jwk = cached[:keys].find { |candidate| candidate["kid"] == kid }
+          return jwk if jwk
+
+          raise_not_found(issuer, kid) if now - cached[:fetched_at] < @refetch_cooldown
+        end
+
+        keys = fetch_jwks(jwks_uri)
+        @mutex.synchronize { @key_sets[jwks_uri] = { keys: keys, fetched_at: now } }
+        keys.find { |candidate| candidate["kid"] == kid } || raise_not_found(issuer, kid)
+      end
+
+      def fresh_key_set(jwks_uri)
+        @mutex.synchronize do
+          entry = @key_sets[jwks_uri]
+          entry if entry && now - entry[:fetched_at] <= @key_ttl
+        end
+      end
+
+      def raise_not_found(issuer, kid)
+        raise JWKSKeyNotFoundError, "kid #{kid.inspect} not found in JWKS for #{issuer}"
       end
 
       def resolve_jwks_uri(issuer)

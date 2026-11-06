@@ -41,9 +41,9 @@ module Keycardai
       # module-level function defaults, keeps its sessions until it is garbage
       # collected, which closes the underlying sockets.
       class NetHTTPClient
-        DEFAULT_OPEN_TIMEOUT = Net::HTTP.new("localhost").open_timeout
-        DEFAULT_READ_TIMEOUT = Net::HTTP.new("localhost").read_timeout
-        private_constant :DEFAULT_OPEN_TIMEOUT, :DEFAULT_READ_TIMEOUT
+        # Open and read timeout for a request whose caller passed no timeout:
+        # 10 seconds, so a request to the zone cannot wait for Net::HTTP's 60.
+        DEFAULT_TIMEOUT = 10
 
         def initialize
           @registry = {}
@@ -107,10 +107,10 @@ module Keycardai
 
         def perform(uri, request, timeout)
           http = session_for(uri)
-          # Timeouts are per request; a request without one gets Net::HTTP's
-          # defaults back rather than the previous request's values.
-          http.open_timeout = timeout || DEFAULT_OPEN_TIMEOUT
-          http.read_timeout = timeout || DEFAULT_READ_TIMEOUT
+          # Timeouts are per request; a request without one gets the default
+          # back rather than the previous request's values.
+          http.open_timeout = timeout || DEFAULT_TIMEOUT
+          http.read_timeout = timeout || DEFAULT_TIMEOUT
           http.start unless http.started?
           response = http.request(request)
           Response.new(status: response.code.to_i, headers: response.to_hash, body: response.body.to_s)
