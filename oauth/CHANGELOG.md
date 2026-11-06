@@ -15,6 +15,14 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.6.1-keycardai-oauth (2026-11-06)
+
+
+- fix(keycardai-oauth): throttle JWKS refetches for unknown key ids, and time out zone requests by default (#49)
+- JWKSKeyring keeps the last key set per jwks_uri for key_ttl, looks a kid up there before fetching, refetches for a missing kid at most once per refetch_cooldown (default 30 seconds, 0 fetches per miss), and drops the set in invalidate. NetHTTPClient gives a request with no timeout: 10 seconds instead of Net::HTTP's 60, so every request to the zone is bounded while callers can still pass timeout:. Follows typescript-sdk #309 and #310. SDK-93.
+- Co-authored-by: devin-ai-keycard <devin-ai@keycard.ai>
+Co-authored-by: Larry Osakwe <larry@keycard.ai>
+
 ## 0.6.0-keycardai-oauth (2026-10-09)
 
 
