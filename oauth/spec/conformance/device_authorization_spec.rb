@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "socket"
 require "time"
 require "tmpdir"
 
@@ -182,6 +183,17 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
       end
     end
 
+    [0, -1, "5"].each do |interval|
+      it "25: a response with interval #{interval.inspect} is a ProtocolError with code invalid_response" do
+        http = zone_http(device: json_response(device_payload.merge("interval" => interval)))
+
+        expect { client(http).request_device_authorization }
+          .to raise_error(Keycardai::OAuth::ProtocolError, /invalid interval/) { |e|
+            expect(e.code).to eq("invalid_response")
+          }
+      end
+    end
+
     it "raises the zone's OAuth error, such as invalid_target" do
       http = zone_http(device: oauth_error("invalid_target"))
 
@@ -270,10 +282,16 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
         polls: -> { [json_response({}, status: 503)] },
         events: [[:wait, 5], :poll],
         error: poll_error, next_interval: 5, cause: Keycardai::OAuth::HTTPError, cause_status: 503 },
-      { row: "13", name: "a 5xx with an OAuth error body",
+      { row: "26", name: "a 503 with the OAuth error body temporarily_unavailable",
         polls: -> { [oauth_error("temporarily_unavailable", status: 503)] },
         events: [[:wait, 5], :poll],
-        error: poll_error, next_interval: 5, cause: Keycardai::OAuth::OAuthError, cause_status: 503 },
+        error: poll_error, next_interval: 5, cause: Keycardai::OAuth::OAuthError, cause_status: 503,
+        cause_code: "temporarily_unavailable" },
+      { row: "27", name: "the credential's client authentication fails on a poll",
+        credential: -> { Keycardai::OAuth::WorkloadIdentity.new(source: -> { raise IOError, "token file gone" }) },
+        polls: -> { [] },
+        events: [[:wait, 5]],
+        error: Keycardai::OAuth::WorkloadIdentityRuntimeError, no_interval: true },
       { row: "16", name: "slow_down, then a network error",
         polls: -> { [oauth_error("slow_down"), network_error] },
         events: [[:wait, 5], :poll, [:wait, 10], :poll],
@@ -301,7 +319,8 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
       it "#{example[:row]}: #{example[:name]}" do
         http = zone_http(polls: instance_exec(&example[:polls]))
         auth = authorization(**example.fetch(:authorization, {}))
-        run = -> { client(http).wait_for_token(auth, interval: example[:interval]) }
+        options = example.key?(:credential) ? { client_id: nil, credential: instance_exec(&example[:credential]) } : {}
+        run = -> { client(http, **options).wait_for_token(auth, interval: example[:interval]) }
 
         if example[:token]
           token = run.call
@@ -314,6 +333,8 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
             expect(e.interval).to eq(example[:next_interval]) if example.key?(:next_interval)
             expect(e.cause).to be_an_instance_of(example[:cause]) if example.key?(:cause)
             expect(e.cause.status).to eq(example[:cause_status]) if example.key?(:cause_status)
+            expect(e.cause.error).to eq(example[:cause_code]) if example.key?(:cause_code)
+            expect(e).not_to respond_to(:interval) if example[:no_interval]
           }
         end
         expect(events).to eq(example[:events])
@@ -350,6 +371,30 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
       expect { client(http).wait_for_token(authorization(interval: 1), cancelled: -> { cancel }) }
         .to raise_error(Keycardai::OAuth::CancelledError)
       expect(events).to eq([[:wait, 0.5], [:wait, 0.5], :poll])
+    end
+
+    it "28: a deadline longer than the request timeout does not extend a poll that does not respond" do
+      server = TCPServer.new("127.0.0.1", 0)
+      held = []
+      acceptor = Thread.new { loop { held << server.accept } }
+      endpoint = "http://127.0.0.1:#{server.addr[1]}/oauth/token"
+      metadata = Keycardai::OAuth::Discovery.parse_metadata(
+        zone.issuer, JSON.dump(zone.metadata(device: true).merge("token_endpoint" => endpoint))
+      )
+      device = described_class.new(metadata: metadata, client_id: "cid", http_client: Keycardai::OAuth::HTTP::NetHTTPClient.new,
+                                   timeout: 0.2, clock: clock, sleep: clock.method(:sleep))
+
+      expect { device.wait_for_token(authorization, deadline: clock.now + 3600) }
+        .to raise_error(Keycardai::OAuth::DevicePollError) { |e|
+          expect(e.interval).to eq(5)
+          expect(e.cause).to be_an_instance_of(Keycardai::OAuth::NetworkError)
+          expect(e.cause.message).to eq("request to 127.0.0.1 failed: Net::ReadTimeout")
+        }
+      expect(events).to eq([[:wait, 5]])
+    ensure
+      acceptor&.kill
+      held&.each(&:close)
+      server&.close
     end
 
     it "15: polls with the device_code of a DeviceAuthorization rebuilt from persisted fields" do
