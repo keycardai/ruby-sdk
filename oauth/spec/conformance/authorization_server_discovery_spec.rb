@@ -76,6 +76,19 @@ RSpec.describe "Authorization server discovery" do
     expect(metadata.end_session_endpoint).to be_nil
   end
 
+  [
+    { row: "9", name: "types device_authorization_endpoint when the document has it", device: true,
+      expected: "https://acme.test/oauth/device_authorization" },
+    { row: "10", name: "leaves device_authorization_endpoint nil, without error, when the document omits it",
+      device: false, expected: nil }
+  ].each do |example|
+    it "#{example[:row]}: #{example[:name]}" do
+      http = zone.http_client(zone.metadata_url => -> { json_response(zone.metadata(device: example[:device])) })
+
+      expect(discover(http).device_authorization_endpoint).to eq(example[:expected])
+    end
+  end
+
   it "raises a configuration error for an empty issuer" do
     expect { Keycardai::OAuth.fetch_authorization_server_metadata("", http_client: zone.http_client) }
       .to raise_error(Keycardai::OAuth::ConfigurationError)

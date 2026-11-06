@@ -15,7 +15,7 @@ module Keycardai
     # document omits it.
     AuthorizationServerMetadata = Data.define(
       :issuer, :token_endpoint, :authorization_endpoint, :jwks_uri, :registration_endpoint,
-      :userinfo_endpoint, :end_session_endpoint,
+      :userinfo_endpoint, :end_session_endpoint, :device_authorization_endpoint,
       :grant_types_supported, :token_endpoint_auth_methods_supported, :response_types_supported, :raw
     ) do
       # @param field [String] a metadata field name

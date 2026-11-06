@@ -46,6 +46,28 @@ module Keycardai
       end
     end
 
+    # DeviceAuthorizationClient#wait_for_token stopped because a poll failed
+    # with a network error, a 5xx, or a 429. The original failure is +cause+.
+    # +interval+ is the wait, in seconds, the loop would have used before its
+    # next poll, including every slow_down increase.
+    #
+    # To resume, call wait_for_token again with the same DeviceAuthorization
+    # and interval: error.interval, before its expires_at. After a timeout,
+    # wait longer than +interval+ before resuming (RFC 8628 §3.5).
+    class DevicePollError < Keycardai::Error
+      # @return [Integer] seconds
+      attr_reader :interval
+
+      def initialize(message, interval:)
+        super(message)
+        @interval = interval
+      end
+    end
+
+    # The caller cancelled DeviceAuthorizationClient#wait_for_token, or its
+    # deadline passed. The loop sends no request after this.
+    class CancelledError < Keycardai::Error; end
+
     # The server's response violates the protocol contract: metadata with a
     # mismatched or missing issuer, a token response with no access token.
     # The +code+ discriminates the case (issuer_mismatch, invalid_metadata,

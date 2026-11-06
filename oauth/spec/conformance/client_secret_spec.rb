@@ -57,4 +57,30 @@ RSpec.describe Keycardai::OAuth::ClientSecret do
     )
     expect(params.keys).not_to include("client_id", "client_secret", "client_assertion")
   end
+
+  [
+    { name: "single-zone", credential: -> { described_class.new("cid", "csecret") },
+      issuer: "https://acme.test", basic: "cid:csecret" },
+    { name: "multi-zone, a configured zone",
+      credential: lambda {
+        described_class.new("https://acme.test" => %w[cid_a secret_a], "https://beta.test" => %w[cid_b secret_b])
+      },
+      issuer: "https://beta.test", basic: "cid_b:secret_b" }
+  ].each do |example|
+    it "7: client authentication, #{example[:name]}, returns that zone's Basic header and no form fields" do
+      auth = instance_exec(&example[:credential])
+             .client_authentication(issuer: example[:issuer], endpoint: "#{example[:issuer]}/oauth/token")
+
+      expect(auth).to eq(Keycardai::OAuth::ClientAuthentication.new(
+                           headers: { "Authorization" => "Basic #{[example[:basic]].pack("m0")}" }, params: {}
+                         ))
+    end
+  end
+
+  it "7: client authentication for an unconfigured zone fails closed" do
+    credential = described_class.new("https://acme.test" => %w[cid_a secret_a])
+
+    expect { credential.client_authentication(issuer: "https://unknown.test", endpoint: "https://unknown.test/oauth/token") }
+      .to raise_error(Keycardai::OAuth::ConfigurationError)
+  end
 end

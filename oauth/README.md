@@ -16,6 +16,7 @@ Capabilities:
 - Token exchange and impersonation (RFC 8693)
 - Client credentials grant (RFC 6749 §4.4)
 - Authorization code + PKCE, including the challenge-driven loopback flow (RFC 8252)
+- Device authorization grant (RFC 8628)
 - Dynamic client registration (RFC 7591)
 - Authorization server discovery (RFC 8414), including the OIDC Discovery 1.0 §3 endpoints
 - UserInfo: the signed-in user's identity claims (OIDC Core 1.0 §5.3)
@@ -123,6 +124,40 @@ token = Keycardai::OAuth.refresh_authorization(
 )
 stored_refresh_token = token.refresh_token if token.refresh_token
 ```
+
+A client with a credential passes `credential:` in place of `client_id` and
+`client_secret`. The credential must respond to `client_authentication`.
+
+### Sign in a device with no browser
+
+The device authorization grant (RFC 8628) lets a process with no browser get a
+token for a person. Show the person the verification URI and the user code,
+then wait while they confirm on another device.
+
+```ruby
+device = Keycardai::OAuth::DeviceAuthorizationClient.new(
+  issuer: "https://your-zone.keycard.cloud",
+  credential: credential, # or client_id: "..." for a public client
+)
+
+authorization = device.request_device_authorization(scopes: ["openid"])
+puts "Visit #{authorization.verification_uri_complete || authorization.verification_uri}"
+puts "and confirm the code #{authorization.user_code}"
+
+begin
+  token = device.wait_for_token(authorization, deadline: Time.now + 300)
+rescue Keycardai::OAuth::DevicePollError => e
+  # A network error, a 5xx, or a 429 stopped the loop. e.cause is the failure.
+  # Resume later with: device.wait_for_token(authorization, interval: e.interval)
+end
+```
+
+`wait_for_token` raises `OAuthError` with `error == "access_denied"` when the
+person denies the request, and `"expired_token"` when the code expires first.
+Pass `cancelled:` (a callable) or `deadline:` (a `Time`) to stop the wait.
+A request already in flight runs to completion. A token from a request with
+more than one resource is not for any one of them. To get a token for one
+resource, refresh with `resources: [that_resource]`.
 
 ### Act as a named user
 
