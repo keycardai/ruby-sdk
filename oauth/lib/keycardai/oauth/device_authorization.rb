@@ -28,23 +28,6 @@ module Keycardai
       end
     end
 
-    # The default clock for the device authorization grant: real time and a
-    # real sleep. A clock responds to +now+, returning a Time, and
-    # +sleep(seconds)+. Inject a fake in tests so the poll loop runs without
-    # real delays.
-    class SystemClock
-      # @return [Time]
-      def now
-        Time.now
-      end
-
-      # @param seconds [Numeric]
-      # @return [void]
-      def sleep(seconds)
-        Kernel.sleep(seconds)
-      end
-    end
-
     # OAuth 2.0 device authorization grant (RFC 8628), from the device's side.
     # The device asks the zone for a device code and a user code, the caller
     # shows the user code to a person, and the device polls the token endpoint
@@ -77,14 +60,18 @@ module Keycardai
       # @param http_client [#get, #post_form] pluggable transport
       # @param timeout [Numeric, nil] per-request timeout in seconds. It
       #   bounds each request, not the wait between polls.
-      # @param clock [#now, #sleep] time source for expires_at and the poll
-      #   waits
+      # @param clock [#call] returns the current Time; read for expires_at,
+      #   the poll waits, and the discovery cache
+      # @param sleep [#call] waits the given number of seconds. Inject fakes
+      #   for clock and sleep in tests so the poll loop runs without real
+      #   delays.
       # @param discovery_ttl [Numeric] metadata cache lifetime in seconds
       # @raise [ConfigurationError] not exactly one of credential and
       #   client_id, a credential without client_authentication, no issuer
       #   or metadata, or an issuer that differs from the metadata's
       def initialize(issuer: nil, metadata: nil, credential: nil, client_id: nil,
-                     http_client: HTTP::NetHTTPClient.new, timeout: nil, clock: SystemClock.new,
+                     http_client: HTTP::NetHTTPClient.new, timeout: nil, clock: -> { Time.now },
+                     sleep: ->(seconds) { Kernel.sleep(seconds) },
                      discovery_ttl: TokenRequests::DEFAULT_DISCOVERY_TTL)
         ClientAuth.validate(credential: credential, client_id: client_id)
         @issuer = resolve_issuer(issuer, metadata)
@@ -94,6 +81,7 @@ module Keycardai
         @http_client = http_client
         @timeout = timeout
         @clock = clock
+        @sleep = sleep
         @discovery_ttl = discovery_ttl
         @discovered = nil
         @discovered_at = nil
@@ -177,9 +165,9 @@ module Keycardai
       # @raise [CancelledError]
       def wait_for_token(authorization, interval: nil, cancelled: nil, deadline: nil)
         interval = starting_interval(authorization, interval)
-        cancellation = Cancellation.new(cancelled: cancelled, deadline: deadline, clock: @clock)
+        cancellation = Cancellation.new(cancelled: cancelled, deadline: deadline, clock: @clock, sleep: @sleep)
         loop do
-          raise_expired if @clock.now + interval > authorization.expires_at
+          raise_expired if @clock.call + interval > authorization.expires_at
           cancellation.wait(interval)
           token, interval = poll_step(authorization, interval)
           return token if token
@@ -202,10 +190,10 @@ module Keycardai
         return @metadata if @metadata
 
         @discovery_mutex.synchronize do
-          if @discovered.nil? || @clock.now - @discovered_at > @discovery_ttl
+          if @discovered.nil? || @clock.call - @discovered_at > @discovery_ttl
             @discovered = OAuth.fetch_authorization_server_metadata(@issuer, http_client: @http_client,
                                                                              timeout: @timeout)
-            @discovered_at = @clock.now
+            @discovered_at = @clock.call
           end
           @discovered
         end
@@ -232,7 +220,7 @@ module Keycardai
           verification_uri: document["verification_uri"],
           verification_uri_complete: document["verification_uri_complete"],
           expires_in: document["expires_in"], interval: document.fetch("interval", DEFAULT_INTERVAL),
-          expires_at: @clock.now + document["expires_in"]
+          expires_at: @clock.call + document["expires_in"]
         )
       end
 
@@ -299,25 +287,26 @@ module Keycardai
       # The caller's cancellation for one wait_for_token call: a +cancelled+
       # callable, a +deadline+, both, or neither.
       class Cancellation
-        def initialize(cancelled:, deadline:, clock:)
+        def initialize(cancelled:, deadline:, clock:, sleep:)
           @cancelled = cancelled
           @deadline = deadline
           @clock = clock
+          @sleep = sleep
         end
 
-        # Sleep +seconds+ on the clock. Checks for cancellation before and
+        # Sleep +seconds+. Checks for cancellation before and
         # after each sleep, so the check also runs right before the request
         # that follows the wait.
         #
         # @raise [CancelledError]
         def wait(seconds)
-          wake = @clock.now + seconds
+          wake = @clock.call + seconds
           loop do
             check
-            remaining = wake - @clock.now
+            remaining = wake - @clock.call
             break unless remaining.positive?
 
-            @clock.sleep(step(remaining))
+            @sleep.call(step(remaining))
           end
         end
 
@@ -325,14 +314,14 @@ module Keycardai
 
         def check
           raise CancelledError, "wait_for_token was cancelled" if @cancelled&.call
-          raise CancelledError, "wait_for_token reached its deadline" if @deadline && @clock.now >= @deadline
+          raise CancelledError, "wait_for_token reached its deadline" if @deadline && @clock.call >= @deadline
         end
 
         # The next sleep ends at the wake time, the deadline, or the next
         # check of +cancelled+, whichever comes first.
         def step(remaining)
           steps = [remaining]
-          steps << (@deadline - @clock.now) if @deadline
+          steps << (@deadline - @clock.call) if @deadline
           steps << CANCELLATION_CHECK_INTERVAL if @cancelled
           steps.min
         end

@@ -53,7 +53,7 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
 
   def client(http, **options)
     options = { client_id: "cid" }.merge(options)
-    described_class.new(issuer: zone.issuer, http_client: http, clock: clock, **options)
+    described_class.new(issuer: zone.issuer, http_client: http, clock: clock, sleep: clock.method(:sleep), **options)
   end
 
   def authorization(expires_in: 600, interval: 5)
