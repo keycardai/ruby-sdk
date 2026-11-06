@@ -6,7 +6,8 @@
 # loopback flow is covered by the spec's integration table only. Rows 8 to 11
 # belong to the two-call web-app flow, which this gem does not ship; rows 12 to
 # 14 are pinned on the building blocks that flow composes. Row 15 is the
-# refresh step, hosted as refresh_authorization.
+# refresh step, hosted as refresh_authorization. Row 16 is refresh with a
+# credential (spec-version 5).
 RSpec.describe "Authorization code with PKCE" do
   let(:zone) { ZoneFixture.new }
   let(:token_payload) { { "access_token" => "at_user", "token_type" => "Bearer" } }
@@ -198,6 +199,55 @@ RSpec.describe "Authorization code with PKCE" do
     expect { refresh(http) }.to raise_error(Keycardai::OAuth::OAuthError) { |e|
       expect(e.error).to eq("invalid_grant")
     }
+  end
+
+  it "16: refresh with a credential sends the credential's headers and form fields and no client_id" do
+    http = token_http
+    credential = Keycardai::OAuth::WorkloadIdentity.new(source: -> { "platform-token" })
+    Keycardai::OAuth.refresh_authorization(zone.issuer, refresh_token: "rt1", credential: credential,
+                                                        resources: ["https://a.acme.test"], http_client: http)
+
+    call = token_call(http)
+    expect(call.params).to eq([
+                                %w[grant_type refresh_token], %w[refresh_token rt1],
+                                ["resource", "https://a.acme.test"],
+                                %w[client_assertion platform-token],
+                                ["client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"]
+                              ])
+    expect(call.headers).to eq("Accept" => "application/json")
+  end
+
+  it "16: a ClientSecret credential authenticates the refresh with its Basic header" do
+    http = token_http
+    credential = Keycardai::OAuth::ClientSecret.new("cid", "csecret")
+    Keycardai::OAuth.refresh_authorization(zone.issuer, refresh_token: "rt1", credential: credential, http_client: http)
+
+    call = token_call(http)
+    expect(call.headers).to eq("Accept" => "application/json", "Authorization" => "Basic #{["cid:csecret"].pack("m0")}")
+    expect(call.params).to eq([%w[grant_type refresh_token], %w[refresh_token rt1]])
+  end
+
+  [
+    { name: "credential together with client_id",
+      options: { credential: Keycardai::OAuth::ClientSecret.new("cid", "csecret"), client_id: "cid" },
+      message: /not both/ },
+    { name: "credential together with client_secret",
+      options: { credential: Keycardai::OAuth::ClientSecret.new("cid", "csecret"), client_secret: "csecret" },
+      message: /not both/ },
+    { name: "a credential without client authentication",
+      options: { credential: Object.new },
+      message: /does not provide client authentication/ },
+    { name: "neither credential nor client_id",
+      options: {},
+      message: /credential or a client_id/ }
+  ].each do |example|
+    it "16: #{example[:name]} is a configuration error before any request" do
+      http = token_http
+
+      expect { Keycardai::OAuth.refresh_authorization(zone.issuer, refresh_token: "rt1", http_client: http, **example[:options]) }
+        .to raise_error(Keycardai::OAuth::ConfigurationError, example[:message])
+      expect(http.calls).to be_empty
+    end
   end
 
   it "15: a 5xx with no OAuth body raises HTTPError" do
