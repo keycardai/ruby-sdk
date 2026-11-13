@@ -19,6 +19,10 @@ module Keycardai
       # @return [TokenResponse]
       def self.parse_response(response)
         raise error_for(response) unless response.success?
+        if response.body_error
+          raise ProtocolError.new("token response body does not decompress: #{response.body_error.class}",
+                                  code: "invalid_response"), cause: response.body_error
+        end
 
         document = begin
           JSON.parse(response.body)
@@ -33,8 +37,9 @@ module Keycardai
         TokenResponse.from_wire(document)
       end
 
-      # RFC 6749 §5.2: an error response carries error / error_description /
-      # error_uri. Anything else non-2xx is a plain HTTP error.
+      # RFC 6749 §5.2: an error response has error, error_description, and
+      # error_uri. Anything else non-2xx is a plain HTTP error, including a
+      # response whose body does not decompress.
       #
       # @param response [HTTP::Response]
       # @return [OAuthError, HTTPError]
