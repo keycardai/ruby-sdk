@@ -3,7 +3,7 @@
 # Conformance suite for keycard-sdk-spec specs/application-credentials/client-secret.md.
 # Each example maps to a row of the spec's Unit Tests table.
 RSpec.describe Keycardai::OAuth::ClientSecret do
-  it "1: a single-zone credential yields the Basic authorization header" do
+  it "1: a single-zone credential returns the Basic authorization header" do
     credential = described_class.new("cid", "csecret")
 
     expect(credential.authorization_header).to eq("Basic #{["cid:csecret"].pack("m0")}")
@@ -56,6 +56,42 @@ RSpec.describe Keycardai::OAuth::ClientSecret do
       "resource" => "https://api.acme.test"
     )
     expect(params.keys).not_to include("client_id", "client_secret", "client_assertion")
+  end
+
+  [
+    { name: "single-zone", credential: -> { described_class.new("cid", "csecret") },
+      issuer: "https://acme.test", basic: "cid:csecret" },
+    { name: "multi-zone, a configured zone",
+      credential: lambda {
+        described_class.new("https://acme.test" => %w[cid_a secret_a], "https://beta.test" => %w[cid_b secret_b])
+      },
+      issuer: "https://beta.test", basic: "cid_b:secret_b" },
+    { name: "multi-zone, a configured zone with a trailing slash",
+      credential: lambda {
+        described_class.new("https://acme.test" => %w[cid_a secret_a], "https://beta.test" => %w[cid_b secret_b])
+      },
+      issuer: "https://beta.test/", basic: "cid_b:secret_b" }
+  ].each do |example|
+    it "7: client authentication, #{example[:name]}, returns that zone's Basic header and no form fields" do
+      auth = instance_exec(&example[:credential])
+             .client_authentication(issuer: example[:issuer], endpoint: "#{example[:issuer]}/oauth/token")
+
+      expect(auth).to eq(Keycardai::OAuth::ClientAuthentication.new(
+                           headers: { "Authorization" => "Basic #{[example[:basic]].pack("m0")}" }, params: {}
+                         ))
+    end
+  end
+
+  [
+    { issuer: "https://unknown.test", message: "no credentials configured for zone https://unknown.test" },
+    { issuer: nil, message: "multi-zone ClientSecret requires an issuer to resolve credentials" }
+  ].each do |example|
+    it "7: multi-zone client authentication for issuer #{example[:issuer].inspect} fails closed" do
+      credential = described_class.new("https://acme.test" => %w[cid_a secret_a])
+
+      expect { credential.client_authentication(issuer: example[:issuer], endpoint: "https://acme.test/oauth/token") }
+        .to raise_error(Keycardai::OAuth::ConfigurationError, example[:message])
+    end
   end
 
   describe "8: HTTP Basic percent-encodes the client_id and client_secret (spec-version 3)" do

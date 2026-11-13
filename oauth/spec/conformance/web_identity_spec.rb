@@ -3,7 +3,8 @@
 require "tmpdir"
 
 # Conformance suite for keycard-sdk-spec specs/application-credentials/web-identity.md.
-# Each example maps to a row of the spec's Unit Tests table.
+# Each example maps to a row of the spec's Unit Tests table. Row 9 does not
+# apply: the Ruby credential has no audience_config.
 RSpec.describe Keycardai::OAuth::WebIdentity do
   around do |example|
     Dir.mktmpdir { |dir| @storage_dir = dir and example.run }
@@ -34,9 +35,10 @@ RSpec.describe Keycardai::OAuth::WebIdentity do
     expect(credential(key_id: nil, server_name: nil).key_id).not_to be_empty
   end
 
-  it "3: the prepared token-exchange request carries a jwt-bearer assertion and no Basic credentials" do
+  it "3: the prepared token-exchange request has a jwt-bearer assertion and no Basic credentials" do
     params = credential.prepare_token_exchange_request(subject_token: "at", token_endpoint: token_endpoint)
 
+    expect(params.keys).to eq(%w[grant_type subject_token subject_token_type client_assertion client_assertion_type])
     expect(params).to include(
       "subject_token_type" => "urn:ietf:params:oauth:token-type:access_token",
       "client_assertion_type" => "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
@@ -45,7 +47,7 @@ RSpec.describe Keycardai::OAuth::WebIdentity do
     expect(params.keys).not_to include("client_secret")
   end
 
-  it "4: the signed assertion carries iss = sub = client_id, aud = token_endpoint, jti, iat, exp = iat + 300" do
+  it "4: the signed assertion has iss = sub = client_id, aud = token_endpoint, jti, iat, exp = iat + 300" do
     now = Time.at(1_753_920_000)
     params = credential(clock: -> { now }).prepare_token_exchange_request(
       subject_token: "at", token_endpoint: token_endpoint
@@ -60,11 +62,11 @@ RSpec.describe Keycardai::OAuth::WebIdentity do
     expect(claims.fetch("jti")).not_to be_empty
   end
 
-  it "5: the auth accessor yields no Basic credentials" do
+  it "5: the auth accessor returns no Basic credentials" do
     expect(credential.authorization_header).to be_nil
   end
 
-  it "6: the public JWKS accessor yields a key set containing the signing key" do
+  it "6: the public JWKS accessor returns a key set containing the signing key" do
     subject = credential
     params = subject.prepare_token_exchange_request(subject_token: "at", token_endpoint: token_endpoint)
     jwks = subject.public_jwks
@@ -81,7 +83,43 @@ RSpec.describe Keycardai::OAuth::WebIdentity do
     expect(subject.client_jwks_url("https://tool.example.com/")).to eq("https://tool.example.com/.well-known/jwks.json")
   end
 
-  it "requires a client_id at construction" do
+  it "7: client authentication for the device authorization endpoint signs an assertion with that aud" do
+    now = Time.at(1_753_920_000)
+    endpoint = "https://acme.test/oauth/device_authorization"
+    subject = credential(clock: -> { now })
+    auth = subject.client_authentication(issuer: "https://acme.test", endpoint: endpoint)
+
+    expect(auth.headers).to eq({})
+    expect(auth.params.keys).to eq(%w[client_assertion client_assertion_type])
+    expect(auth.params["client_assertion_type"]).to eq("urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
+    # Verify the signature with the credential's own public JWKS. Expiry is
+    # not checked because the injected clock is in the past.
+    claims, header = JWT.decode(auth.params["client_assertion"], nil, true,
+                                algorithms: ["RS256"], jwks: subject.public_jwks, verify_expiration: false)
+    expect(header).to eq("alg" => "RS256", "kid" => "test-key")
+    expect(claims.keys).to contain_exactly("iss", "sub", "aud", "jti", "iat", "exp")
+    expect(claims).to include("iss" => "client_abc", "sub" => "client_abc", "aud" => endpoint,
+                              "iat" => now.to_i, "exp" => now.to_i + 300)
+  end
+
+  it "7: each client authentication call signs a new assertion with a new jti" do
+    subject = credential
+    jtis = Array.new(2) do
+      assertion = subject.client_authentication(issuer: nil, endpoint: token_endpoint).params["client_assertion"]
+      decode_jwt_part(assertion.split(".")[1]).fetch("jti")
+    end
+
+    expect(jtis.uniq.size).to eq(2)
+  end
+
+  it "requires the endpoint for client authentication" do
+    expect { credential.client_authentication(issuer: nil, endpoint: nil) }
+      .to raise_error(Keycardai::OAuth::ConfigurationError, /endpoint/)
+  end
+
+  # The Ruby credential takes client_id at construction, so client
+  # authentication without one cannot be called.
+  it "8: a missing client_id is a configuration error at construction, before any assertion is signed" do
     expect { credential(client_id: nil) }.to raise_error(Keycardai::OAuth::ConfigurationError)
   end
 
