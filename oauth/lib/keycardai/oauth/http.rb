@@ -19,12 +19,31 @@ module Keycardai
         end
       end
 
-      # Build an HTTP Basic Authorization header value (RFC 7617).
+      # Build an HTTP Basic Authorization header value (RFC 7617) for client
+      # authentication. RFC 6749 §2.3.1 requires each value to be
+      # percent-encoded before it is joined with ":" and base64-encoded.
       #
+      # @param client_id [String]
+      # @param client_secret [String]
       # @return [String]
       def self.basic_authorization(client_id, client_secret)
-        "Basic #{["#{client_id}:#{client_secret}"].pack("m0")}"
+        "Basic #{["#{percent_encode(client_id)}:#{percent_encode(client_secret)}"].pack("m0")}"
       end
+
+      # Percent-encode every byte of the UTF-8 value except ASCII letters,
+      # digits, and "-._~". A space becomes %20, not "+". The result decodes
+      # to the value with both a form decoder (RFC 6749 Appendix B) and a
+      # percent decoder. A binary (ASCII-8BIT) string is encoded byte for
+      # byte; a string in another encoding is converted to UTF-8 first.
+      #
+      # @param value [String]
+      # @return [String]
+      def self.percent_encode(value)
+        value = value.to_s
+        value = value.encode(Encoding::UTF_8) unless value.encoding == Encoding::BINARY
+        value.b.gsub(/[^A-Za-z0-9\-._~]/n) { |byte| format("%%%02X", byte.ord) }
+      end
+      private_class_method :percent_encode
 
       # Default transport backed by Net::HTTP. TLS is used for https URLs.
       #
