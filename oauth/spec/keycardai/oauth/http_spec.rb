@@ -123,3 +123,50 @@ RSpec.describe Keycardai::OAuth::HTTP::NetHTTPClient do
       .to raise_error(Keycardai::OAuth::NetworkError, "request to zone.example failed: EOFError")
   end
 end
+
+# These tests use the real Net::HTTP, which decompresses a gzip body while it
+# reads it.
+RSpec.describe Keycardai::OAuth::HTTP::NetHTTPClient, "response bodies" do
+  let(:client) { described_class.new }
+
+  after { @server&.close }
+
+  def serve(*responses)
+    queue = responses.dup
+    @server = RawHTTPServer.new { queue.shift }
+  end
+
+  # The second request is a POST, which Net::HTTP does not retry, so it
+  # succeeds only if the client does not reuse a broken connection. The
+  # server keeps connections open, so +connections+ shows whether the client
+  # opened a new one.
+  [
+    { name: "a 200 with a gzip body that does not decompress", response: RawHTTPServer.corrupt_gzip(200),
+      status: 200, body: "", body_error: Zlib::DataError, connections: 2 },
+    { name: "a 503 with a gzip body that does not decompress", response: RawHTTPServer.corrupt_gzip(503),
+      status: 503, body: "", body_error: Zlib::DataError, connections: 2 },
+    { name: "a 200 with a gzip body", response: RawHTTPServer.gzip_json(200, { "ok" => true }),
+      status: 200, body: '{"ok":true}', body_error: NilClass, connections: 1 }
+  ].each do |example|
+    it "returns #{example[:name]} with its status, and the next POST on the client succeeds" do
+      serve(example[:response], RawHTTPServer.json(200, { "next" => true }))
+
+      response = client.post_form(@server.url("/token"), { "grant_type" => "x" })
+      following = client.post_form(@server.url("/next"), { "grant_type" => "x" })
+
+      expect(response).to have_attributes(status: example[:status], body: example[:body])
+      expect(response.body_error).to be_an_instance_of(example[:body_error])
+      expect(following).to have_attributes(status: 200, body: '{"next":true}')
+      expect(@server.connections).to eq(example[:connections])
+    end
+  end
+
+  it "discovery reads a 200 that does not decompress as a malformed document" do
+    serve(RawHTTPServer.corrupt_gzip(200))
+
+    expect { Keycardai::OAuth.fetch_authorization_server_metadata(@server.url(""), http_client: client) }
+      .to raise_error(Keycardai::OAuth::ProtocolError, "metadata for #{@server.url("")} is not valid JSON") { |e|
+        expect(e.code).to eq("invalid_metadata")
+      }
+  end
+end

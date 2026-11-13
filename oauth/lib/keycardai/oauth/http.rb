@@ -3,16 +3,32 @@
 require "json"
 require "net/http"
 require "uri"
+require "zlib"
 
 module Keycardai
   module OAuth
     # Pluggable HTTP transport. Every network operation in the SDK goes
     # through an object with this surface, so tests and custom transport
-    # policies can inject their own client. No hidden retries: retry policy
-    # belongs to the injected client.
+    # policies can inject their own client. An injected client returns
+    # HTTP::Response. No hidden retries: retry policy belongs to the injected
+    # client.
     module HTTP
       # A minimal HTTP response: numeric status, header hash, body string.
-      Response = Data.define(:status, :headers, :body) do
+      #
+      # +body_error+ is the Zlib error raised when a body with a
+      # Content-Encoding such as gzip does not decompress. The body is then
+      # empty. Such a response is malformed. It is not a network error.
+      # Net::HTTP does not raise for a truncated gzip body; the body is then
+      # what it decompressed, and +body_error+ is nil.
+      Response = Data.define(:status, :headers, :body, :body_error) do
+        # @param status [Integer]
+        # @param headers [Hash{String => Array<String>}]
+        # @param body [String]
+        # @param body_error [Exception, nil]
+        def initialize(status:, headers:, body:, body_error: nil)
+          super
+        end
+
         # @return [Boolean] whether the status is 2xx
         def success?
           (200..299).cover?(status)
@@ -131,10 +147,19 @@ module Keycardai
           http.open_timeout = timeout || DEFAULT_TIMEOUT
           http.read_timeout = timeout || DEFAULT_TIMEOUT
           http.start unless http.started?
-          response = http.request(request)
-          Response.new(status: response.code.to_i, headers: response.to_hash, body: response.body.to_s)
+          # Net::HTTP reads the body after the block returns, so +received+
+          # holds the status when the body does not decompress.
+          received = nil
+          response = http.request(request) { |res| received = res }
+          build_response(response, response.body.to_s)
+        rescue Zlib::Error => e
+          build_response(received, "", e)
         rescue SystemCallError, SocketError, Timeout::Error, OpenSSL::SSL::SSLError, EOFError => e
           raise NetworkError, "request to #{uri.host} failed: #{e.class}"
+        end
+
+        def build_response(response, body, body_error = nil)
+          Response.new(status: response.code.to_i, headers: response.to_hash, body: body, body_error: body_error)
         end
 
         def session_for(uri)
