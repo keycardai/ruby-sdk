@@ -13,7 +13,8 @@ end
 # An in-memory Keycard zone for conformance tests: an issuer with RSA signing
 # keys, RFC 8414 metadata, and a JWKS document, wired to a FakeHTTPClient.
 class ZoneFixture
-  attr_reader :issuer, :metadata_url, :jwks_url, :token_url, :registration_url, :userinfo_url, :end_session_url
+  attr_reader :issuer, :metadata_url, :jwks_url, :token_url, :registration_url, :userinfo_url, :end_session_url,
+              :device_authorization_url
 
   def initialize(issuer: "https://acme.test", kids: ["kid-1"])
     @issuer = issuer
@@ -23,6 +24,7 @@ class ZoneFixture
     @registration_url = "#{issuer}/oauth/register"
     @userinfo_url = "#{issuer}/oauth/userinfo"
     @end_session_url = "#{issuer}/oauth/logout"
+    @device_authorization_url = "#{issuer}/oauth/device_authorization"
     @keys = kids.to_h { |kid| [kid, OpenSSL::PKey::RSA.new(2048)] }
   end
 
@@ -32,11 +34,12 @@ class ZoneFixture
 
   # RFC 8414 metadata. A Keycard zone serves the same document for
   # /.well-known/openid-configuration, so the OIDC members are available with
-  # oidc: true.
-  def metadata(jwks_uri: @jwks_url, oidc: false)
+  # oidc: true. device: true adds the RFC 8628 device_authorization_endpoint.
+  def metadata(jwks_uri: @jwks_url, oidc: false, device: false)
     document = { "issuer" => @issuer, "jwks_uri" => jwks_uri, "token_endpoint" => @token_url,
                  "authorization_endpoint" => "#{@issuer}/oauth/authorize",
                  "registration_endpoint" => @registration_url }
+    document["device_authorization_endpoint"] = @device_authorization_url if device
     return document unless oidc
 
     document.merge("userinfo_endpoint" => @userinfo_url, "end_session_endpoint" => @end_session_url,
