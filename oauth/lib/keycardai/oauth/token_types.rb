@@ -17,6 +17,7 @@ module Keycardai
       AUTHORIZATION_CODE = "authorization_code"
       REFRESH_TOKEN = "refresh_token"
       TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange"
+      DEVICE_CODE = "urn:ietf:params:oauth:grant-type:device_code"
     end
 
     # A token issued by the authorization server, the shared response shape of
