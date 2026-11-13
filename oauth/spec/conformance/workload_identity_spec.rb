@@ -41,6 +41,8 @@ RSpec.describe Keycardai::OAuth::WorkloadIdentity do
       "client_assertion_type" => "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
       "subject_token_type" => "urn:ietf:params:oauth:token-type:access_token"
     )
+    expect(params.keys).to eq(%w[grant_type subject_token subject_token_type resource client_assertion
+                                 client_assertion_type])
     expect(credential.authorization_header).to be_nil
   end
 
@@ -80,6 +82,27 @@ RSpec.describe Keycardai::OAuth::WorkloadIdentity do
 
     expect(prepare(with_id)).to include("client_id" => "app_123")
     expect(prepare(without_id)).not_to have_key("client_id")
+  end
+
+  [
+    { row: "4b", name: "with client_id", client_id: "app_123",
+      params: { "client_id" => "app_123", "client_assertion" => "platform-token",
+                "client_assertion_type" => "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" } },
+    { row: "4b", name: "without client_id", client_id: nil,
+      params: { "client_assertion" => "platform-token",
+                "client_assertion_type" => "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" } },
+    { row: "4c", name: "with a source token that is not a JWT", client_id: nil, token: "opaque value",
+      params: { "client_assertion" => "opaque value",
+                "client_assertion_type" => "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" } }
+  ].each do |example|
+    it "#{example[:row]}: client authentication #{example[:name]} returns form fields only" do
+      source = rotating_source_class.new(example.fetch(:token, "platform-token"))
+      credential = described_class.new(source: source, client_id: example[:client_id])
+
+      auth = credential.client_authentication(issuer: "https://acme.test", endpoint: "https://acme.test/oauth/token")
+
+      expect(auth).to eq(Keycardai::OAuth::ClientAuthentication.new(headers: {}, params: example[:params]))
+    end
   end
 
   describe Keycardai::OAuth::FileTokenSource do

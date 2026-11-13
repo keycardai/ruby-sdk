@@ -72,11 +72,27 @@ module Keycardai
           "subject_token_type" => TokenType::ACCESS_TOKEN,
           "resource" => resource,
           "audience" => audience,
-          "scope" => scope,
-          "client_assertion" => @key_manager.create_client_assertion(client_id: @client_id,
-                                                                     audience: token_endpoint),
-          "client_assertion_type" => PrivateKeyManager::ASSERTION_TYPE
-        }.compact
+          "scope" => scope
+        }.compact.merge(client_authentication(issuer: issuer, endpoint: token_endpoint).params)
+      end
+
+      # Client authentication for one request: a newly signed client assertion
+      # and its type, as form fields. The assertion's aud is the endpoint the
+      # request goes to. A Keycard zone rejects any other aud with
+      # invalid_client. Each call signs a new assertion with a new jti.
+      #
+      # @param issuer [String, nil] unused; part of the Credential interface
+      # @param endpoint [String] the URL the request goes to
+      # @return [ClientAuthentication]
+      # @raise [ConfigurationError] when endpoint is missing
+      def client_authentication(issuer:, endpoint:)
+        if endpoint.nil? || endpoint.empty?
+          raise ConfigurationError, "WebIdentity requires the endpoint URL as the assertion audience"
+        end
+
+        assertion = @key_manager.create_client_assertion(client_id: @client_id, audience: endpoint)
+        ClientAuthentication.new(params: { "client_assertion" => assertion,
+                                           "client_assertion_type" => PrivateKeyManager::ASSERTION_TYPE })
       end
 
       # The public JWKS the authorization server verifies assertions against.
