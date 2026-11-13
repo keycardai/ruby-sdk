@@ -103,6 +103,11 @@ module Keycardai
     class DeviceAuthorizationClient
       # Poll interval, in seconds, when the response omits one (RFC 8628 §3.2).
       DEFAULT_INTERVAL = 5
+      # Seconds added to the interval on each slow_down (RFC 8628 §3.5).
+      SLOW_DOWN_INCREMENT = 5
+      # Longest sleep, in seconds, between two calls of a +cancelled+ callable
+      # during a wait.
+      CANCELLATION_CHECK_INTERVAL = 0.5
 
       # @param issuer [String, nil] the zone's issuer URL; required unless
       #   metadata is given
@@ -115,26 +120,31 @@ module Keycardai
       # @param timeout [Numeric, nil] per-request timeout in seconds, for
       #   discovery, the device authorization request, and each poll. nil
       #   uses the transport's default, 10 seconds for NetHTTPClient.
-      # @param clock [#call] returns the current Time; read for expires_at and
-      #   the discovery cache
+      # @param clock [#call] returns the current Time; read for expires_at,
+      #   the poll waits, and the discovery cache
+      # @param sleep [#call] waits the given number of seconds. Inject fakes
+      #   for clock and sleep in tests so the poll loop runs without real
+      #   delays.
       # @param discovery_ttl [Numeric] metadata cache lifetime in seconds,
       #   0 or more
       # @raise [ConfigurationError] not exactly one of credential and
       #   client_id, a credential without client_authentication, no issuer
-      #   or metadata, an issuer that differs from the metadata's, a clock
-      #   that does not respond to call, a timeout that is not positive, or
-      #   a negative discovery_ttl
+      #   or metadata, an issuer that differs from the metadata's, a clock or
+      #   sleep that does not respond to call, a timeout that is not
+      #   positive, or a negative discovery_ttl
       def initialize(issuer: nil, metadata: nil, credential: nil, client_id: nil,
                      http_client: HTTP::NetHTTPClient.new, timeout: nil, clock: -> { Time.now },
+                     sleep: ->(seconds) { Kernel.sleep(seconds) },
                      discovery_ttl: TokenRequests::DEFAULT_DISCOVERY_TTL)
         ClientAuth.validate(credential: credential, client_id: client_id)
-        validate_options(timeout, clock, discovery_ttl)
+        validate_options(timeout, clock, sleep, discovery_ttl)
         @issuer = resolve_issuer(issuer, metadata)
         @credential = credential
         @client_id = client_id
         @http_client = http_client
         @timeout = timeout
         @clock = clock
+        @sleep = sleep
         @endpoints = DeviceEndpoints.new(issuer: @issuer, metadata: metadata, http_client: http_client,
                                          timeout: timeout, clock: clock, ttl: discovery_ttl)
       end
@@ -191,11 +201,69 @@ module Keycardai
         TokenRequests.parse_response(post(@endpoints.url(:token_endpoint), poll_params(authorization)))
       end
 
+      # Poll until the person approves or denies the request (RFC 8628 §3.5).
+      #
+      # The loop waits the interval before each poll, including the first.
+      # On authorization_pending it polls again. On slow_down it adds 5
+      # seconds to the interval for this and every later poll. Any other
+      # OAuth error stops the loop and is raised as is. A network error, a
+      # 5xx, or a 429 stops the loop with a DevicePollError, and the loop
+      # does not repeat that poll. Any other failure, such as the
+      # credential's, is raised as is. If the next poll would start after
+      # expires_at, it raises OAuthError expired_token without waiting or
+      # sending it.
+      #
+      # Cancellation: the loop calls +cancelled+ and compares +deadline+ with
+      # the clock before each request and during each wait. It raises
+      # CancelledError once either reports cancellation, and then does not
+      # call the credential or send another request. A request in flight is
+      # not interrupted. It ends with a response or at the request timeout.
+      #
+      # When the device authorization request named more than one resource,
+      # the token is not for any one of them, even if the response names one.
+      # NEVER store it as the token for a single resource. To get a token for
+      # one resource, call Keycardai::OAuth.refresh_authorization with
+      # resources: [that_resource].
+      #
+      # @param authorization [DeviceAuthorization]
+      # @param interval [Integer, nil] the wait before the first poll and the
+      #   starting interval, in seconds. Defaults to authorization.interval.
+      #   Pass DevicePollError#interval to resume a stopped loop.
+      # @param cancelled [#call, nil] returns true once the caller cancels;
+      #   called at least every CANCELLATION_CHECK_INTERVAL seconds of a wait
+      # @param deadline [Time, nil] cancel once the clock reaches it
+      # @return [TokenResponse]
+      # @raise [ConfigurationError] an interval that is not a positive integer
+      #   or is below authorization.interval, an authorization without
+      #   device_code, expires_at, or a positive integer interval, a
+      #   cancelled that does not respond to call, a deadline that is not a
+      #   Time, or a bad token_endpoint; no request is sent
+      # @raise [OAuthError] expired_token, access_denied, invalid_grant, ...
+      #   An expired_token the loop raises without a request has a nil status.
+      # @raise [DevicePollError] a poll failed with a network error, a 5xx, or
+      #   a 429
+      # @raise [CancelledError]
+      def wait_for_token(authorization, interval: nil, cancelled: nil, deadline: nil)
+        interval = starting_interval(authorization, interval)
+        cancellation = DeviceCancellation.new(cancelled: cancelled, deadline: deadline, clock: @clock, sleep: @sleep)
+        cancellation.check
+        endpoint = @endpoints.url(:token_endpoint)
+        check_expiry(authorization, interval)
+        loop do
+          cancellation.wait(interval)
+          token, interval = poll_step(authorization, endpoint, interval)
+          return token if token
+
+          check_expiry(authorization, interval)
+        end
+      end
+
       private
 
-      def validate_options(timeout, clock, discovery_ttl)
+      def validate_options(timeout, clock, sleep, discovery_ttl)
         raise ConfigurationError, "clock must respond to call" unless clock.respond_to?(:call)
-        unless timeout.nil? || (timeout.is_a?(Numeric) && timeout.positive?)
+        raise ConfigurationError, "sleep must respond to call" unless sleep.respond_to?(:call)
+        unless timeout.nil? || positive_number?(timeout)
           raise ConfigurationError, "timeout #{timeout.inspect} is not a positive number of seconds"
         end
         return if discovery_ttl.is_a?(Numeric) && !discovery_ttl.negative?
@@ -227,10 +295,76 @@ module Keycardai
       end
 
       def post(endpoint, params)
-        params, headers = ClientAuth.apply(params, { "Accept" => "application/json" },
-                                           issuer: @issuer, endpoint: endpoint,
-                                           credential: @credential, client_id: @client_id)
+        params, headers = authenticate(endpoint, params)
         @http_client.post_form(endpoint, params, headers: headers, timeout: @timeout)
+      end
+
+      def authenticate(endpoint, params)
+        ClientAuth.apply(params, { "Accept" => "application/json" }, issuer: @issuer, endpoint: endpoint,
+                                                                     credential: @credential, client_id: @client_id)
+      end
+
+      def starting_interval(authorization, interval)
+        validate_authorization(authorization)
+        unless authorization.expires_at.is_a?(Time) && positive_integer?(authorization.interval)
+          raise ConfigurationError, "the device authorization needs an expires_at Time and a positive integer interval"
+        end
+        return authorization.interval if interval.nil?
+        unless positive_integer?(interval)
+          raise ConfigurationError, "interval #{interval.inspect} is not a positive integer"
+        end
+        return interval if interval >= authorization.interval
+
+        raise ConfigurationError,
+              "interval #{interval.inspect} is below the device authorization's interval #{authorization.interval}"
+      end
+
+      def positive_integer?(value)
+        value.is_a?(Integer) && value.positive?
+      end
+
+      def positive_number?(value)
+        value.is_a?(Numeric) && value.positive?
+      end
+
+      def check_expiry(authorization, interval)
+        return if @clock.call + interval <= authorization.expires_at
+
+        raise OAuthError.new("the device code expires before the next poll", error: "expired_token", status: nil)
+      end
+
+      # One poll. Returns the token, or nil and the interval for the next
+      # poll. The credential is called outside every rescue, so its failure
+      # is raised as is.
+      def poll_step(authorization, endpoint, interval)
+        params, headers = authenticate(endpoint, poll_params(authorization))
+        response = send_poll(endpoint, params, headers, interval)
+        begin
+          [TokenRequests.parse_response(response), interval]
+        rescue HTTPError => e
+          poll_error(e, interval)
+        end
+      end
+
+      def send_poll(endpoint, params, headers, interval)
+        @http_client.post_form(endpoint, params, headers: headers, timeout: @timeout)
+      rescue NetworkError => e
+        # RFC 8628 §3.5: wait longer after a connection timeout.
+        raise DevicePollError.new("device token poll failed: #{e.message}", interval: interval * 2)
+      end
+
+      # The next step after a poll that raised +error+: poll again, or stop.
+      def poll_error(error, interval)
+        if error.status == 429 || error.status.to_i >= 500
+          raise DevicePollError.new("device token poll failed: #{error.message}", interval: interval)
+        end
+        raise error unless error.is_a?(OAuthError)
+
+        case error.error
+        when "authorization_pending" then [nil, interval]
+        when "slow_down" then [nil, interval + SLOW_DOWN_INCREMENT]
+        else raise error
+        end
       end
     end
 
@@ -292,5 +426,55 @@ module Keycardai
       end
     end
     private_constant :DeviceEndpoints
+
+    # The caller's cancellation for one DeviceAuthorizationClient#wait_for_token
+    # call: a +cancelled+ callable, a +deadline+, both, or neither.
+    class DeviceCancellation
+      def initialize(cancelled:, deadline:, clock:, sleep:)
+        raise ConfigurationError, "cancelled must respond to call" unless cancelled.nil? || cancelled.respond_to?(:call)
+        raise ConfigurationError, "deadline must be a Time" unless deadline.nil? || deadline.is_a?(Time)
+
+        @cancelled = cancelled
+        @deadline = deadline
+        @clock = clock
+        @sleep = sleep
+      end
+
+      # @raise [CancelledError]
+      def check
+        raise CancelledError, "wait_for_token was cancelled" if @cancelled&.call
+        raise CancelledError, "wait_for_token reached its deadline" if @deadline && @clock.call >= @deadline
+      end
+
+      # Sleep +seconds+ in steps, checking for cancellation before and after
+      # each step. The last check runs right before the poll that follows.
+      # The wait counts the seconds passed to sleep, so it ends even when the
+      # clock does not advance.
+      #
+      # @raise [CancelledError]
+      def wait(seconds)
+        remaining = seconds
+        loop do
+          check
+          break unless remaining.positive?
+
+          step = step(remaining)
+          @sleep.call(step)
+          remaining -= step
+        end
+      end
+
+      private
+
+      # The next sleep ends at the wake time, the deadline, or the next
+      # call of +cancelled+, whichever comes first.
+      def step(remaining)
+        steps = [remaining]
+        steps << (@deadline - @clock.call) if @deadline
+        steps << DeviceAuthorizationClient::CANCELLATION_CHECK_INTERVAL if @cancelled
+        steps.min
+      end
+    end
+    private_constant :DeviceCancellation
   end
 end

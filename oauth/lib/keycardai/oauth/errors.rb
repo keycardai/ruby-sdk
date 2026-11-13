@@ -14,7 +14,7 @@ module Keycardai
     # exception as +cause+.
     class NetworkError < Keycardai::Error; end
 
-    # A non-2xx HTTP response. Carries the status code and response body.
+    # A non-2xx HTTP response. Has the status code and response body.
     class HTTPError < Keycardai::Error
       # @return [Integer]
       attr_reader :status
@@ -29,7 +29,7 @@ module Keycardai
     end
 
     # An OAuth error response from the authorization server (RFC 6749 §5.2).
-    # Carries the wire error code plus the optional description and URI.
+    # Has the wire error code plus the optional description and URI.
     class OAuthError < HTTPError
       # @return [String] the OAuth error code (e.g. invalid_grant)
       attr_reader :error
@@ -45,6 +45,32 @@ module Keycardai
         @error_uri = error_uri
       end
     end
+
+    # DeviceAuthorizationClient#wait_for_token stopped because a poll failed
+    # with a network error, a 5xx, or a 429. The original failure is +cause+:
+    # the NetworkError, the HTTPError, or the OAuthError when a 5xx or 429
+    # has an OAuth error body. Treat that OAuthError as temporary, whatever
+    # its code.
+    #
+    # +interval+ is the wait, in seconds, the loop would have used before its
+    # next poll, including every slow_down increase. After a network error it
+    # is doubled (RFC 8628 §3.5). To resume, call wait_for_token again with
+    # the same DeviceAuthorization and interval: error.interval, before its
+    # expires_at.
+    class DevicePollError < Keycardai::Error
+      # @return [Integer] seconds
+      attr_reader :interval
+
+      def initialize(message, interval:)
+        super(message)
+        @interval = interval
+      end
+    end
+
+    # The caller cancelled DeviceAuthorizationClient#wait_for_token, or its
+    # deadline passed. The loop does not call the credential or send a
+    # request after this.
+    class CancelledError < Keycardai::Error; end
 
     # The server's response violates the protocol contract: metadata with a
     # mismatched or missing issuer, a token response with no access token.
