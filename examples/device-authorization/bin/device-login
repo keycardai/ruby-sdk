@@ -1,0 +1,83 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# The device authorization grant (RFC 8628). A process with no browser asks
+# the zone for a user code, prints it, and polls until a person approves the
+# request on another device.
+#
+# Configure in Keycard before running:
+#   - A zone (KEYCARD_ZONE_URL), e.g. https://your-zone.keycard.cloud
+#   - An OAuth client (KEYCARD_CLIENT_ID) with the device code grant enabled.
+#     For a confidential client, also set KEYCARD_CLIENT_SECRET. Without it the
+#     example runs as a public client and sends only client_id.
+#   - Optional: KEYCARD_SCOPES, space-separated (default "openid"). With
+#     openid, the zone adds its userinfo resource, so policy must allow it for
+#     this client.
+#   - Optional: KEYCARD_RESOURCES, space-separated resource URLs. Each must be
+#     a Resource in the zone, or the request fails with invalid_target. With
+#     more than one, the example refreshes the token for the first resource.
+#
+# Run from examples/device-authorization:
+#   bundle install
+#   KEYCARD_ZONE_URL=... KEYCARD_CLIENT_ID=... bundle exec bin/device-login
+
+require "bundler/setup"
+require "keycardai/oauth"
+
+OAuth = Keycardai::OAuth
+
+zone_url = ENV.fetch("KEYCARD_ZONE_URL", "")
+client_id = ENV.fetch("KEYCARD_CLIENT_ID", "")
+abort "KEYCARD_ZONE_URL and KEYCARD_CLIENT_ID are required" if zone_url.empty? || client_id.empty?
+scopes = ENV.fetch("KEYCARD_SCOPES", "openid").split
+resources = ENV.fetch("KEYCARD_RESOURCES", "").split
+
+# The refresh authenticates the same way as the device authorization request.
+secret = ENV.fetch("KEYCARD_CLIENT_SECRET", "")
+auth = secret.empty? ? { client_id: client_id } : { credential: OAuth::ClientSecret.new(client_id, secret) }
+device = OAuth::DeviceAuthorizationClient.new(issuer: zone_url, **auth)
+
+authorization = device.request_device_authorization(scopes: scopes, resources: resources)
+puts "On another device, open:\n\n  #{authorization.verification_uri_complete || authorization.verification_uri}\n\n"
+puts "and confirm the code:\n\n  #{authorization.user_code}\n\n"
+puts "Waiting for approval (expires at #{authorization.expires_at.strftime("%H:%M:%S")})..."
+
+# Ctrl-C during the wait cancels it. A poll already in flight finishes first.
+interrupted = false
+previous_trap = trap("INT") { interrupted = true }
+
+# After a network error, a 5xx, or a 429, resume at the interval from the
+# error, at most three times.
+attempts = 0
+resume_interval = nil
+begin
+  token = device.wait_for_token(authorization, interval: resume_interval, cancelled: -> { interrupted })
+rescue OAuth::DevicePollError => e
+  raise if (attempts += 1) > 3
+
+  puts "Poll failed (#{e.cause.message}); resuming in #{e.interval}s."
+  resume_interval = e.interval
+  retry
+rescue OAuth::CancelledError
+  abort "Cancelled."
+rescue OAuth::OAuthError => e
+  case e.error
+  when "access_denied" then abort "The request was denied."
+  when "expired_token" then abort "The code expired before anyone approved it. Run the example again."
+  else raise
+  end
+ensure
+  trap("INT", previous_trap)
+end
+
+puts "Approved. Token type #{token.token_type}, expires in #{token.expires_in}s, scopes #{token.scope.inspect}."
+puts "refresh_token returned: #{!token.refresh_token.nil?}"
+puts "id_token returned: #{!token.id_token.nil?}"
+
+# With more than one resource, the token is not for any one of them. Refresh
+# with one resource to get a token for it.
+exit if resources.size < 2 || token.refresh_token.nil?
+
+narrowed = OAuth.refresh_authorization(zone_url, refresh_token: token.refresh_token, resources: resources.first(1),
+                                                 **auth)
+puts "Token for #{resources.first}: expires in #{narrowed.expires_in}s."

@@ -10,6 +10,10 @@ sources.
   `bin/selftest` is a hermetic end-to-end run against a stub zone,
   `bin/live-e2e` executes the spec's Integration Tests rows against a real
   zone, and `bin/smoke` checks the templates-repo HTTP contract.
+- [`device-authorization/`](device-authorization/): a process with no
+  browser signs a person in with the device authorization grant (RFC 8628).
+  `bin/device-login` runs against a real zone, and `bin/selftest` runs it
+  against a stub zone.
 - [`a2a-delegation/`](a2a-delegation/): two agents demonstrating the A2A
   delegation contract, where one calls the other on the user's behalf and the
   user's identity survives the hop. `bin/selftest` proves the full
