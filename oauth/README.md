@@ -106,10 +106,10 @@ change server-side.
 
 ### Refresh a stored grant
 
-A token response from the authorization-code flow may carry a `refresh_token`.
+A token response from the authorization-code flow may have a `refresh_token`.
 Redeem it with `refresh_authorization`, which authenticates the client the way
 `exchange_authorization_code` does. The gem keeps no state: when the response
-carries a new `refresh_token`, the server rotated it and you store it in place
+has a new `refresh_token`, the server rotated it and you store it in place
 of the old one. `OAuthError` with `error == "invalid_grant"` means the user must
 authorize again.
 
@@ -123,6 +123,10 @@ token = Keycardai::OAuth.refresh_authorization(
 )
 stored_refresh_token = token.refresh_token if token.refresh_token
 ```
+
+A client with a credential passes `credential:` in place of `client_id` and
+`client_secret`. `ClientSecret`, `WebIdentity`, and `WorkloadIdentity` all work
+here. A credential of your own must respond to `client_authentication`.
 
 ### Act as a named user
 
