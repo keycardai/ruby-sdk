@@ -15,9 +15,19 @@ module Keycardai
     # document omits it.
     AuthorizationServerMetadata = Data.define(
       :issuer, :token_endpoint, :authorization_endpoint, :jwks_uri, :registration_endpoint,
-      :userinfo_endpoint, :end_session_endpoint,
+      :userinfo_endpoint, :end_session_endpoint, :device_authorization_endpoint,
       :grant_types_supported, :token_endpoint_auth_methods_supported, :response_types_supported, :raw
     ) do
+      # Every member but +issuer+ defaults to nil, and +raw+ to an empty
+      # hash, so metadata can be built by hand from the fields a caller
+      # knows.
+      def initialize(issuer:, token_endpoint: nil, authorization_endpoint: nil, jwks_uri: nil,
+                     registration_endpoint: nil, userinfo_endpoint: nil, end_session_endpoint: nil,
+                     device_authorization_endpoint: nil, grant_types_supported: nil,
+                     token_endpoint_auth_methods_supported: nil, response_types_supported: nil, raw: {})
+        super
+      end
+
       # @param field [String] a metadata field name
       # @return [Object, nil] the field's value from the full document
       def [](field)
