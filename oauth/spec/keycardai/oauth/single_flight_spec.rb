@@ -35,22 +35,27 @@ RSpec.describe Keycardai::OAuth::SingleFlight do
       first_outcome: Timeout::Error },
     { name: "Thread#kill", interrupt: lambda(&:kill), first_outcome: NilClass }
   ].each do |c|
+    # The fetch checks a cache first, as the SDK's callers do. A waiter that
+    # wakes after the second fetch has stored its value reads the cache and
+    # does not fetch.
     it "lets the waiting callers fetch again when #{c[:name]} interrupts the first caller" do
       gates = [Queue.new, Queue.new]
       fetches = Queue.new
+      cache = {}
       value = Object.new
       first, others = start_shared_callers do
         flights.run(:zone) do
+          next cache[:value] if cache.key?(:value)
+
           fetches << :fetch
           gates.fetch(fetches.size - 1).pop
-          value
+          cache[:value] = value
         end
       end
 
       c[:interrupt].call(first)
       expect(outcome(first)).to be_a(c[:first_outcome])
       wait_for("the second fetch") { fetches.size == 2 }
-      wait_until_blocked(others)
       gates[1] << :go
 
       expect(others.map { |thread| outcome(thread) }).to all(equal(value))
