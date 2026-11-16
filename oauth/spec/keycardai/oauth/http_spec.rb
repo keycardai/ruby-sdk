@@ -8,7 +8,7 @@ RSpec.describe Keycardai::OAuth::HTTP::NetHTTPClient do
   # the requests it served.
   fake_session = Class.new do
     attr_reader :host, :port, :requests
-    attr_accessor :use_ssl, :open_timeout, :read_timeout, :fail_with
+    attr_accessor :use_ssl, :open_timeout, :read_timeout, :write_timeout, :max_retries, :fail_with
 
     def initialize(host, port)
       @host = host
@@ -17,6 +17,7 @@ RSpec.describe Keycardai::OAuth::HTTP::NetHTTPClient do
       @requests = []
       @open_timeout = 60
       @read_timeout = 60
+      @write_timeout = 60
     end
 
     def start
@@ -78,16 +79,16 @@ RSpec.describe Keycardai::OAuth::HTTP::NetHTTPClient do
   it "applies the timeout per request and restores the 10 second default when absent" do
     client.get("https://zone.example/a", timeout: 2.5)
     session = sessions.first
-    expect([session.open_timeout, session.read_timeout]).to eq([2.5, 2.5])
+    expect([session.open_timeout, session.read_timeout, session.write_timeout]).to eq([2.5, 2.5, 2.5])
 
     client.get("https://zone.example/b")
-    expect([session.open_timeout, session.read_timeout]).to eq([10, 10])
+    expect([session.open_timeout, session.read_timeout, session.write_timeout]).to eq([10, 10, 10])
   end
 
   it "a request with no timeout never inherits Net::HTTP's 60 second default" do
     client.get("https://zone.example/a")
     session = sessions.first
-    expect([session.open_timeout, session.read_timeout]).to eq([10, 10])
+    expect([session.open_timeout, session.read_timeout, session.write_timeout]).to eq([10, 10, 10])
   end
 
   it "close finishes sessions and the next request opens a fresh one" do
@@ -115,12 +116,29 @@ RSpec.describe Keycardai::OAuth::HTTP::NetHTTPClient do
     expect(dead_session).not_to be_started
   end
 
-  it "wraps transport failures into NetworkError with the unchanged message" do
-    client.get("https://zone.example/a")
-    sessions.first.fail_with = EOFError.new("end of file reached")
+  [
+    EOFError.new("end of file reached"),
+    IOError.new("closed stream"),
+    Errno::ECONNREFUSED.new,
+    Net::OpenTimeout.new,
+    Net::ReadTimeout.new,
+    OpenSSL::SSL::SSLError.new("certificate verify failed"),
+    Net::HTTPBadResponse.new("wrong status line"),
+    Net::HTTPHeaderSyntaxError.new("wrong header line format")
+  ].each do |error|
+    it "raises #{error.class} from the transport as a NetworkError that names the class" do
+      client.get("https://zone.example/a")
+      sessions.first.fail_with = error
 
-    expect { client.get("https://zone.example/a") }
-      .to raise_error(Keycardai::OAuth::NetworkError, "request to zone.example failed: EOFError")
+      expect { client.get("https://zone.example/a") }
+        .to raise_error(Keycardai::OAuth::NetworkError, "request to zone.example failed: #{error.class}")
+    end
+  end
+
+  it "turns off Net::HTTP's retry of a failed GET" do
+    client.get("https://zone.example/a")
+
+    expect(sessions.first.max_retries).to eq(0)
   end
 end
 
@@ -159,6 +177,30 @@ RSpec.describe Keycardai::OAuth::HTTP::NetHTTPClient, "response bodies" do
       expect(following).to have_attributes(status: 200, body: '{"next":true}')
       expect(@server.connections).to eq(example[:connections])
     end
+  end
+
+  [
+    { name: "a GET", call: ->(client, url) { client.get(url) } },
+    { name: "a POST", call: ->(client, url) { client.post_form(url, { "grant_type" => "x" }) } }
+  ].each do |example|
+    it "sends #{example[:name]} once when the server closes the connection without answering" do
+      requests = Queue.new
+      @server = RawHTTPServer.new do |method, _path|
+        requests << method
+        :close
+      end
+
+      expect { example[:call].call(client, @server.url("/a")) }
+        .to raise_error(Keycardai::OAuth::NetworkError, /\Arequest to 127\.0\.0\.1 failed: /)
+      expect(requests.size).to eq(1)
+    end
+  end
+
+  it "raises NetworkError for a response whose status line Net::HTTP cannot parse" do
+    @server = RawHTTPServer.new { "not an HTTP status line\r\n\r\n" }
+
+    expect { client.get(@server.url("/a")) }
+      .to raise_error(Keycardai::OAuth::NetworkError, "request to 127.0.0.1 failed: Net::HTTPBadResponse")
   end
 
   it "discovery reads a 200 that does not decompress as a malformed document" do

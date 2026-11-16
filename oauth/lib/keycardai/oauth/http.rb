@@ -76,9 +76,19 @@ module Keycardai
       # module-level function defaults, keeps its sessions until it is garbage
       # collected, which closes the underlying sockets.
       class NetHTTPClient
-        # Open and read timeout for a request whose caller passed no timeout:
-        # 10 seconds, so a request to the zone cannot wait for Net::HTTP's 60.
+        # Open, read and write timeout for a request whose caller passed no
+        # timeout: 10 seconds, so a request to the zone cannot wait for
+        # Net::HTTP's 60. Each one bounds a single step of the request, such as
+        # one read from the socket, not the whole request.
         DEFAULT_TIMEOUT = 10
+
+        # What a request raises when the connection or the response fails:
+        # DNS, connect, TLS, timeout, a dropped connection, or a response
+        # Net::HTTP cannot parse. Each one becomes a NetworkError.
+        TRANSPORT_ERRORS = [
+          SystemCallError, SocketError, Timeout::Error, OpenSSL::SSL::SSLError, IOError,
+          Net::ProtocolError, Net::HTTPBadResponse, Net::HTTPHeaderSyntaxError
+        ].freeze
 
         def initialize
           @registry = {}
@@ -99,7 +109,7 @@ module Keycardai
 
         # @param url [String]
         # @param headers [Hash{String => String}]
-        # @param timeout [Numeric, nil] open/read timeout in seconds
+        # @param timeout [Numeric, nil] open, read and write timeout in seconds
         # @return [Response]
         # @raise [NetworkError] on DNS, TLS, connect, or timeout failures
         def get(url, headers: {}, timeout: nil)
@@ -112,7 +122,7 @@ module Keycardai
         # @param url [String]
         # @param params [Hash] form fields, sent application/x-www-form-urlencoded
         # @param headers [Hash{String => String}]
-        # @param timeout [Numeric, nil] open/read timeout in seconds
+        # @param timeout [Numeric, nil] open, read and write timeout in seconds
         # @return [Response]
         # @raise [NetworkError] on DNS, TLS, connect, or timeout failures
         def post_form(url, params, headers: {}, timeout: nil)
@@ -126,7 +136,7 @@ module Keycardai
         # @param url [String]
         # @param payload [Hash] request body, sent as application/json
         # @param headers [Hash{String => String}]
-        # @param timeout [Numeric, nil] open/read timeout in seconds
+        # @param timeout [Numeric, nil] open, read and write timeout in seconds
         # @return [Response]
         # @raise [NetworkError] on DNS, TLS, connect, or timeout failures
         def post_json(url, payload, headers: {}, timeout: nil)
@@ -146,6 +156,7 @@ module Keycardai
           # back rather than the previous request's values.
           http.open_timeout = timeout || DEFAULT_TIMEOUT
           http.read_timeout = timeout || DEFAULT_TIMEOUT
+          http.write_timeout = timeout || DEFAULT_TIMEOUT
           http.start unless http.started?
           # Net::HTTP reads the body after the block returns, so +received+
           # holds the status when the body does not decompress.
@@ -154,7 +165,7 @@ module Keycardai
           build_response(response, response.body.to_s)
         rescue Zlib::Error => e
           build_response(received, "", e)
-        rescue SystemCallError, SocketError, Timeout::Error, OpenSSL::SSL::SSLError, EOFError => e
+        rescue *TRANSPORT_ERRORS => e
           raise NetworkError, "request to #{uri.host} failed: #{e.class}"
         end
 
@@ -170,6 +181,8 @@ module Keycardai
 
           http = Net::HTTP.new(uri.host, uri.port)
           http.use_ssl = uri.scheme == "https"
+          # Net::HTTP retries a failed GET once by default.
+          http.max_retries = 0
           sessions[key] = http
         end
 

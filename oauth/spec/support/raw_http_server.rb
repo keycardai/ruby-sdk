@@ -6,8 +6,9 @@ require "zlib"
 
 # A local HTTP/1.1 server for tests that need the real NetHTTPClient, such as
 # a body that does not decompress or a request that times out. The block gets
-# each request's method and path and returns the raw response bytes, or :hang
-# to accept the request and never answer. Connections stay open between
+# each request's method and path and returns the raw response bytes, :hang
+# to accept the request and never answer, or :close to close the connection
+# without answering. Connections stay open between
 # requests until the client closes them, and +connections+ counts how many
 # the server accepted.
 class RawHTTPServer
@@ -71,6 +72,7 @@ class RawHTTPServer
     while (request = read_request(socket))
       response = @handler.call(*request)
       break if response == :hang
+      break socket.close if response == :close
 
       socket.write(response)
     end
