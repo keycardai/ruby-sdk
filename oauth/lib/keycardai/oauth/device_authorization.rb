@@ -13,6 +13,7 @@ module Keycardai
     # NEVER show +device_code+ to the person. Show +verification_uri_complete+
     # when it is set, and +verification_uri+ otherwise. Always show
     # +user_code+ too, so the person can compare it with the confirmation page.
+    # An empty +verification_uri_complete+ in the response is read as absent.
     DeviceAuthorization = Data.define(
       :device_code, :user_code, :verification_uri, :verification_uri_complete, :expires_in, :interval, :expires_at
     ) do
@@ -47,7 +48,7 @@ module Keycardai
 
         new(device_code: document["device_code"], user_code: document["user_code"],
             verification_uri: document["verification_uri"],
-            verification_uri_complete: document["verification_uri_complete"],
+            verification_uri_complete: document["verification_uri_complete"].then { |uri| uri unless uri == "" },
             expires_in: document["expires_in"], expires_at: received_at + document["expires_in"],
             interval: document.fetch("interval", DeviceAuthorizationClient::DEFAULT_INTERVAL))
       end

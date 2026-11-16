@@ -117,6 +117,12 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
                            ))
     end
 
+    it "reads an empty verification_uri_complete as absent" do
+      http = zone_http(device: json_response(device_payload.merge("verification_uri_complete" => "")))
+
+      expect(client(http).request_device_authorization.verification_uri_complete).to be_nil
+    end
+
     it "parses every field of a full response" do
       http = zone_http(device: json_response(device_payload.merge("interval" => 7)))
 
