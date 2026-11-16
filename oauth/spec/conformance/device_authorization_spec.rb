@@ -769,6 +769,72 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
       expect(http.calls).to be_empty
     end
 
+    # The cancellation arrives while the credential's client_authentication
+    # runs: the callable starts returning true, or the credential takes 3
+    # seconds and the deadline passes.
+    [
+      { name: "a cancelled callable", options: ->(state) { { cancelled: -> { state[:cancel] } } },
+        message: "wait_for_token was cancelled" },
+      { name: "a deadline", options: ->(_state) { { deadline: now + 7 } },
+        message: "wait_for_token reached its deadline" }
+    ].each do |example|
+      it "33: cancelled by #{example[:name]} while the credential runs: no request is sent" do
+        http = zone_http
+        state = { cancel: false, calls: 0 }
+        fake_clock = clock
+        credential = Object.new
+        credential.define_singleton_method(:client_authentication) do |issuer:, endpoint:| # rubocop:disable Lint/UnusedBlockArgument
+          state[:calls] += 1
+          state[:cancel] = true
+          fake_clock.sleep(3)
+          Keycardai::OAuth::ClientAuthentication.new(headers: {}, params: {})
+        end
+        device = described_class.new(metadata: parsed_metadata(zone.metadata(device: true)),
+                                     credential: credential, http_client: http,
+                                     clock: clock, sleep: clock.method(:sleep))
+
+        expect { device.wait_for_token(authorization, **instance_exec(state, &example[:options])) }
+          .to raise_error(Keycardai::OAuth::CancelledError, example[:message])
+        expect(state[:calls]).to eq(1)
+        expect(http.calls).to be_empty
+      end
+    end
+
+    it "a wait that ends after expires_at raises expired_token without calling the credential or polling" do
+      http = zone_http
+      device = described_class.new(metadata: parsed_metadata(zone.metadata(device: true)),
+                                   credential: recording_credential, http_client: http,
+                                   clock: clock, sleep: ->(seconds) { clock.sleep(seconds + 1) })
+
+      expect { device.wait_for_token(authorization(expires_in: 60), interval: 60) }
+        .to raise_error(Keycardai::OAuth::OAuthError, "the device code expired before the poll") { |e|
+          expect([e.error, e.status]).to eq(["expired_token", nil])
+        }
+      expect(events).to eq([[:wait, 61]])
+      expect(recording_credential.calls).to be_empty
+      expect(http.calls).to be_empty
+    end
+
+    it "a credential call that ends after expires_at raises expired_token without polling" do
+      http = zone_http
+      fake_clock = clock
+      credential = Object.new
+      credential.define_singleton_method(:client_authentication) do |issuer:, endpoint:| # rubocop:disable Lint/UnusedBlockArgument
+        fake_clock.sleep(3)
+        Keycardai::OAuth::ClientAuthentication.new(headers: {}, params: {})
+      end
+      device = described_class.new(metadata: parsed_metadata(zone.metadata(device: true)),
+                                   credential: credential, http_client: http,
+                                   clock: clock, sleep: clock.method(:sleep))
+
+      expect { device.wait_for_token(authorization(expires_in: 60), interval: 60) }
+        .to raise_error(Keycardai::OAuth::OAuthError, "the device code expired before the poll") { |e|
+          expect([e.error, e.status]).to eq(["expired_token", nil])
+        }
+      expect(events).to eq([[:wait, 60], [:wait, 3]])
+      expect(http.calls).to be_empty
+    end
+
     [
       { name: "a cancelled that already returns true", options: -> { { cancelled: -> { true } } },
         message: "wait_for_token was cancelled" },

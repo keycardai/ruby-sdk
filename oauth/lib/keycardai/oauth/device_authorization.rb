@@ -229,13 +229,14 @@ module Keycardai
       # does not repeat that poll. Any other failure, such as the
       # credential's, is raised as is. If the next poll would start after
       # expires_at, it raises OAuthError expired_token without waiting or
-      # sending it.
+      # sending it. The loop checks before each wait and again after it.
       #
       # Cancellation: the loop calls +cancelled+ and compares +deadline+ with
-      # the clock before each request and during each wait. It raises
-      # CancelledError once either reports cancellation, and then does not
-      # call the credential or send another request. A request in flight is
-      # not interrupted. It ends with a response or at the request timeout.
+      # the clock during each wait, and again after the credential returns,
+      # right before the request. It raises CancelledError once either reports
+      # cancellation, and then does not call the credential or send another
+      # request. A request in flight is not interrupted. It ends with a
+      # response or at the request timeout.
       #
       # When the device authorization request named more than one resource,
       # the token is not for any one of them, even if the response names one.
@@ -269,7 +270,8 @@ module Keycardai
         check_expiry(authorization, interval)
         loop do
           cancellation.wait(interval)
-          token, interval = poll_step(authorization, endpoint, interval)
+          check_expired(authorization)
+          token, interval = poll_step(authorization, endpoint, interval, cancellation)
           return token if token
 
           check_expiry(authorization, interval)
@@ -351,11 +353,20 @@ module Keycardai
         raise OAuthError.new("the device code expires before the next poll", error: "expired_token", status: nil)
       end
 
+      # A wait or the credential call can end after expires_at.
+      def check_expired(authorization)
+        return if @clock.call <= authorization.expires_at
+
+        raise OAuthError.new("the device code expired before the poll", error: "expired_token", status: nil)
+      end
+
       # One poll. Returns the token, or nil and the interval for the next
       # poll. The credential is called outside every rescue, so its failure
       # is raised as is.
-      def poll_step(authorization, endpoint, interval)
+      def poll_step(authorization, endpoint, interval, cancellation)
         params, headers = authenticate(endpoint, poll_params(authorization))
+        cancellation.check
+        check_expired(authorization)
         response = send_poll(endpoint, params, headers, interval)
         begin
           [TokenRequests.parse_response(response), interval]
