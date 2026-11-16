@@ -3,6 +3,7 @@
 require_relative "oauth/version"
 require_relative "oauth/errors"
 require_relative "oauth/http"
+require_relative "oauth/single_flight"
 require_relative "oauth/discovery"
 require_relative "oauth/userinfo"
 require_relative "oauth/token_types"

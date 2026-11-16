@@ -14,9 +14,8 @@ module Keycardai
     # evicts its oldest entry on overflow.
     #
     # The cache is in-memory and local to this instance. Thread-safe:
-    # concurrent resolutions for the same issuer are de-duplicated so a burst
-    # of cold-cache requests triggers a single discovery and a single JWKS
-    # fetch.
+    # concurrent callers share one discovery per issuer and one JWKS fetch per
+    # jwks_uri, and get the same result or error.
     class JWKSKeyring
       DEFAULT_KEY_TTL = 300
       DEFAULT_DISCOVERY_TTL = 3600
@@ -46,8 +45,8 @@ module Keycardai
         @keys = {}
         @discovery = {}
         @key_sets = {} # jwks_uri => { keys:, fetched_at: }
-        @issuer_locks = {}
         @mutex = Mutex.new
+        @flights = SingleFlight.new
       end
 
       # Resolve the verification key for a token's issuer and kid.
@@ -63,10 +62,7 @@ module Keycardai
         cached = @mutex.synchronize { fresh_key(issuer, kid) }
         return cached if cached
 
-        issuer_lock(issuer).synchronize do
-          cached = @mutex.synchronize { fresh_key(issuer, kid) }
-          cached || resolve(issuer, kid)
-        end
+        cache_key(issuer, kid, import_key(key_from_set(issuer, kid, resolve_jwks_uri(issuer))))
       end
 
       # Drop cached keys and discovery results, for one issuer or all.
@@ -97,34 +93,30 @@ module Keycardai
         entry[:key]
       end
 
-      def issuer_lock(issuer)
-        @mutex.synchronize { @issuer_locks[issuer] ||= Mutex.new }
-      end
-
-      def resolve(issuer, kid)
-        jwks_uri = resolve_jwks_uri(issuer)
-        jwk = key_from_set(issuer, kid, jwks_uri)
-
-        key = import_key(jwk)
-        cache_key(issuer, kid, key)
-        key
-      end
-
-      # The cached key set first: a kid it holds imports with no fetch, and a kid
-      # it lacks refetches at most once per cooldown, so a rotated-in key is found
-      # once the cooldown has passed.
+      # A kid the cached key set holds imports with no fetch. A kid it lacks
+      # refetches at most once per cooldown, so a rotated-in key is found once
+      # the cooldown has passed.
       def key_from_set(issuer, kid, jwks_uri)
-        cached = fresh_key_set(jwks_uri)
-        if cached
-          jwk = cached[:keys].find { |candidate| candidate["kid"] == kid }
-          return jwk if jwk
-
-          raise_not_found(issuer, kid) if now - cached[:fetched_at] < @refetch_cooldown
+        keys = cached_keys(kid, jwks_uri) || @flights.run([:jwks, jwks_uri]) do
+          cached_keys(kid, jwks_uri) || fetch_key_set(jwks_uri)
         end
+        keys.find { |candidate| candidate["kid"] == kid } || raise_not_found(issuer, kid)
+      end
 
+      # The cached keys when they hold kid or were fetched within the cooldown,
+      # nil when a fetch is due.
+      def cached_keys(kid, jwks_uri)
+        cached = fresh_key_set(jwks_uri)
+        return nil unless cached
+        return cached[:keys] if cached[:keys].any? { |candidate| candidate["kid"] == kid }
+
+        cached[:keys] if now - cached[:fetched_at] < @refetch_cooldown
+      end
+
+      def fetch_key_set(jwks_uri)
         keys = fetch_jwks(jwks_uri)
         @mutex.synchronize { @key_sets[jwks_uri] = { keys: keys, fetched_at: now } }
-        keys.find { |candidate| candidate["kid"] == kid } || raise_not_found(issuer, kid)
+        keys
       end
 
       def fresh_key_set(jwks_uri)
@@ -139,12 +131,19 @@ module Keycardai
       end
 
       def resolve_jwks_uri(issuer)
-        cached = @mutex.synchronize do
+        fresh_jwks_uri(issuer) || @flights.run([:discovery, issuer]) do
+          fresh_jwks_uri(issuer) || discover_and_cache_jwks_uri(issuer)
+        end
+      end
+
+      def fresh_jwks_uri(issuer)
+        @mutex.synchronize do
           entry = @discovery[issuer]
           entry[:jwks_uri] if entry && now - entry[:fetched_at] <= @discovery_ttl
         end
-        return cached if cached
+      end
 
+      def discover_and_cache_jwks_uri(issuer)
         jwks_uri = discover_jwks_uri(issuer)
         assert_same_origin(issuer, jwks_uri)
         @mutex.synchronize { @discovery[issuer] = { jwks_uri: jwks_uri, fetched_at: now } }
@@ -191,10 +190,16 @@ module Keycardai
         raise JWKSKeyNotFoundError, "JWK with kid #{jwk["kid"].inspect} could not be converted to a verification key"
       end
 
+      # Returns the key already cached for (issuer, kid) if there is one, so
+      # concurrent callers that shared a fetch return the same key object.
       def cache_key(issuer, kid, key)
         @mutex.synchronize do
+          cached = fresh_key(issuer, kid)
+          next cached if cached
+
           @keys.shift while @keys.size >= MAX_CACHED_KEYS
           @keys[[issuer, kid]] = { key: key, cached_at: now }
+          key
         end
       end
 

@@ -59,18 +59,53 @@ RSpec.shared_examples "token-endpoint discovery is not sticky" do |rows| # ruboc
   it "#{rows[3]}: concurrent cold-cache calls perform a single discovery request" do
     gate = Queue.new
     http = discovery_http do
-      gate.pop
+      gate.pop if http.request_count(zone.metadata_url) == 1
       json_response(zone.metadata)
     end
     subject = client(http)
 
-    threads = Array.new(4) { Thread.new { request(subject) } }
-    Thread.pass until threads.any? { |t| t.status == "sleep" }
+    first, others = start_shared_callers { request(subject) }
     gate << :go
-    threads.each(&:join)
+    tokens = [first, *others].map { |thread| outcome(thread) }
 
+    expect(tokens.map(&:access_token)).to all(eq(token_payload["access_token"]))
     expect(http.request_count(zone.metadata_url)).to eq(1)
     expect(http.request_count(zone.token_url)).to eq(4)
+  end
+
+  it "#{rows[3]}: concurrent cold-cache calls share one failed discovery and get its error" do
+    gate = Queue.new
+    http = discovery_http do
+      gate.pop if http.request_count(zone.metadata_url) == 1
+      raise Keycardai::OAuth::NetworkError, "connection refused"
+    end
+    subject = client(http)
+
+    first, others = start_shared_callers { request(subject) }
+    gate << :go
+    errors = [first, *others].map { |thread| outcome(thread) }
+
+    expect(errors).to all(be_a(Keycardai::OAuth::NetworkError))
+    expect(errors.map(&:object_id).uniq.size).to eq(1)
+    expect(http.request_count(zone.metadata_url)).to eq(1)
+    expect(http.request_count(zone.token_url)).to eq(0)
+  end
+
+  it "#{rows[3]}: a caller interrupted during a shared discovery does not fail the callers waiting on it" do
+    gate = Queue.new
+    http = discovery_http do
+      gate.pop if http.request_count(zone.metadata_url) == 1
+      json_response(zone.metadata)
+    end
+    subject = client(http)
+
+    first, others = start_shared_callers { request(subject) }
+    first.raise(Timeout::Error, "deadline")
+
+    expect(outcome(first)).to be_a(Timeout::Error)
+    expect(others.map { |thread| outcome(thread) }.map(&:access_token)).to all(eq(token_payload["access_token"]))
+    expect(http.request_count(zone.metadata_url)).to eq(2)
+    expect(http.request_count(zone.token_url)).to eq(3)
   end
 
   it "#{rows[4]}: a call after discovery_ttl has elapsed discovers again" do
