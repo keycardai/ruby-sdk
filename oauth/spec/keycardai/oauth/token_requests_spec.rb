@@ -39,4 +39,28 @@ RSpec.describe Keycardai::OAuth::TokenRequests do
         }
     end
   end
+
+  describe ".parse_response scope" do
+    [
+      { name: "a space-separated string", scope: "read write", expected: %w[read write] },
+      { name: "absent", scope: nil, expected: nil }
+    ].each do |example|
+      it "parses a scope that is #{example[:name]}" do
+        payload = { "access_token" => "at", "scope" => example[:scope] }.compact
+
+        expect(described_class.parse_response(json_response(payload)).scope).to eq(example[:expected])
+      end
+    end
+
+    [5, %w[read write], { "read" => true }].each do |scope|
+      it "raises ProtocolError invalid_response for a scope of #{scope.inspect}" do
+        response = json_response({ "access_token" => "at", "scope" => scope })
+
+        expect { described_class.parse_response(response) }
+          .to raise_error(Keycardai::OAuth::ProtocolError, "token response scope is not a string") { |e|
+            expect(e.code).to eq("invalid_response")
+          }
+      end
+    end
+  end
 end

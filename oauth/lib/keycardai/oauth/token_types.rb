@@ -29,15 +29,12 @@ module Keycardai
     ) do
       # @param payload [Hash] the parsed token-endpoint response body
       # @return [TokenResponse]
-      # @raise [ProtocolError] when the response carries no access token
+      # @raise [ProtocolError] invalid_response when the response has no
+      #   access token, or a scope that is not a string
       def self.from_wire(payload)
-        access_token = payload["access_token"]
-        unless access_token.is_a?(String) && !access_token.empty?
-          raise ProtocolError.new("token response has no access_token", code: "invalid_response")
-        end
-
+        validate(payload)
         new(
-          access_token: access_token,
+          access_token: payload["access_token"],
           token_type: payload["token_type"] || "Bearer",
           expires_in: payload["expires_in"],
           scope: payload["scope"]&.split,
@@ -47,6 +44,17 @@ module Keycardai
           raw: payload
         )
       end
+
+      def self.validate(payload)
+        access_token = payload["access_token"]
+        unless access_token.is_a?(String) && !access_token.empty?
+          raise ProtocolError.new("token response has no access_token", code: "invalid_response")
+        end
+        return if payload["scope"].nil? || payload["scope"].is_a?(String)
+
+        raise ProtocolError.new("token response scope is not a string", code: "invalid_response")
+      end
+      private_class_method :validate
     end
   end
 end
