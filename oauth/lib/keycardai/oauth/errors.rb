@@ -137,6 +137,61 @@ module Keycardai
       end
     end
 
+    # Connect error codes the local Keycard agent refuses an IssueToken request
+    # with, in the snake_case spelling Connect puts on the wire. The
+    # predicates in agent_token_source.rb match the first six; +INVALID_ARGUMENT+ has
+    # no predicate.
+    module AgentCode
+      PERMISSION_DENIED = "permission_denied"
+      RESOURCE_EXHAUSTED = "resource_exhausted"
+      FAILED_PRECONDITION = "failed_precondition"
+      UNAUTHENTICATED = "unauthenticated"
+      NOT_FOUND = "not_found"
+      UNAVAILABLE = "unavailable"
+      INVALID_ARGUMENT = "invalid_argument"
+    end
+
+    # The local Keycard agent refused to issue a token. +message+ is the
+    # agent's own explanation, which names the remedy where there is one;
+    # +code+ is the Connect error code (see AgentCode).
+    class AgentError < Keycardai::Error
+      RETRYABLE_CODES = [AgentCode::RESOURCE_EXHAUSTED, AgentCode::UNAVAILABLE].freeze
+
+      # @return [String]
+      attr_reader :code
+
+      def initialize(message, code:)
+        super(message)
+        @code = code
+      end
+
+      # @return [Boolean] true for resource_exhausted and unavailable only
+      def retryable?
+        RETRYABLE_CODES.include?(code)
+      end
+
+      # The first AgentError in +error+'s +cause+ chain, so an error the caller
+      # wrapped still matches.
+      #
+      # @param error [Exception, nil]
+      # @return [AgentError, nil]
+      def self.find(error)
+        error = error.cause until error.nil? || error.is_a?(AgentError)
+        error
+      end
+    end
+
+    # A 200 response from the local Keycard agent that cannot be used: not a
+    # JSON object, no usable token, or an unparseable expiry. Distinct from
+    # AgentError, which is the agent refusing. The message never includes the
+    # token.
+    class AgentResponseError < Keycardai::Error
+      # @return [Boolean] always false
+      def retryable?
+        false
+      end
+    end
+
     # A workload-identity source is misconfigured at construction: missing
     # token file, no discovery env var set, missing required audience.
     # +source+ names the source: file, gcp-metadata, fly, or custom.
