@@ -549,6 +549,19 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
         polls: -> { [oauth_error("slow_down"), oauth_error("authorization_pending"), json_response(token_payload)] },
         events: [[:wait, 5], :poll, [:wait, 10], :poll, [:wait, 10], :poll],
         token: true },
+      # RFC 8628 §3.5: each slow_down adds 5 to the interval in use, so the
+      # increases add up.
+      { row: "9", name: "slow_down twice, then a token",
+        polls: -> { [oauth_error("slow_down"), oauth_error("slow_down"), json_response(token_payload)] },
+        events: [[:wait, 5], :poll, [:wait, 10], :poll, [:wait, 15], :poll],
+        token: true },
+      { row: "9", name: "slow_down, authorization_pending, slow_down, then a token",
+        polls: lambda {
+          [oauth_error("slow_down"), oauth_error("authorization_pending"), oauth_error("slow_down"),
+           json_response(token_payload)]
+        },
+        events: [[:wait, 5], :poll, [:wait, 10], :poll, [:wait, 10], :poll, [:wait, 15], :poll],
+        token: true },
       { row: "10", name: "access_denied",
         polls: -> { [oauth_error("access_denied")] },
         events: [[:wait, 5], :poll],
