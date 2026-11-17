@@ -37,6 +37,13 @@ is acceptable only if it is sanctioned here; anything else is a contract bug.
    (`discover_application_credential(env: ENV)`), never a constructor fallback.
    Python's `AuthProvider` env fallbacks are the outlier and are deliberately
    not mirrored.
+   A second exception is sanctioned by keycard-sdk-spec base.md:
+   `AgentTokenSource` reads `KEYCARD_SOCKET`, then the variables the Keycard
+   CLI locates its agent daemon's default socket with, because `keycard run`
+   generates its socket path per session and the environment is the only
+   channel that delivers it. It takes the same `env:` keyword
+   `FileTokenSource` does, defaulting to `ENV`, read on each mint rather than
+   at construction; an explicit `socket:` skips the read.
 4. **Namespace spelling**: `Keycardai` (matches the `keycardai` brand string in
    every package ecosystem).
 5. **Ruby floor**: `>= 3.2`. Dev version pinned by `.ruby-version`.

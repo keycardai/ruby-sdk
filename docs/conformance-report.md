@@ -9,7 +9,7 @@ reproducible with the commands in the last section.
 | | |
 | --- | --- |
 | Gems | `keycardai-oauth`, `keycardai-mcp`, `keycardai-a2a` |
-| Capability specs covered | 19 of 22, 2 excluded on purpose, `delegated-access/as-itself` an open gap |
+| Capability specs covered | 20 of 23, 2 excluded on purpose, `delegated-access/as-itself` an open gap |
 | Partial coverage | `authorization-code-pkce` v3 rows 8 to 11 (the stateless web-app begin/complete pair) are unshipped; Ruby covers the flow's building blocks and the loopback `authenticate` |
 | Conformance examples | 173 (plus 6 load/sanity checks, 179 total) |
 | Live-zone integration rows | 13 of 13 passing against a real zone |
@@ -43,6 +43,7 @@ which are labelled without a row number.
 | `application-credentials/workload-identity` | `workload_identity_spec.rb` | 10 |
 | `delegated-access/access-context` | `access_context_spec.rb` | 19 |
 | `delegated-access/impersonation` | `impersonation_spec.rb` | 5 |
+| `delegated-access/local-agent-token-source` | `local_agent_token_source_spec.rb` | 47 (unit rows 19 to 23 cover an SDK-side cache, which Ruby does not keep; integration rows run against a fake agent) |
 | `multi-zone-and-ops/multi-zone-support` | `multi_zone_support_spec.rb` | 6 |
 
 ### keycardai-mcp
