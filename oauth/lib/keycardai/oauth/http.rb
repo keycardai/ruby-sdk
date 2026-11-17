@@ -15,11 +15,11 @@ module Keycardai
     module HTTP
       # A minimal HTTP response: numeric status, header hash, body string.
       #
-      # +body_error+ is the Zlib error raised when a body with a
-      # Content-Encoding such as gzip does not decompress. The body is then
-      # empty. Such a response is malformed. It is not a network error.
-      # Net::HTTP does not raise for a truncated gzip body; the body is then
-      # what it decompressed, and +body_error+ is nil.
+      # +body_error+ is the Zlib error for a gzip or deflate body that
+      # arrived whole and is not valid compressed data. The body is then
+      # empty. Such a response is malformed. It is not a network error. A
+      # body that ends early is a NetworkError, and so is a compressed stream
+      # that ends early.
       Response = Data.define(:status, :headers, :body, :body_error) do
         # @param status [Integer]
         # @param headers [Hash{String => Array<String>}]
@@ -83,12 +83,21 @@ module Keycardai
         DEFAULT_TIMEOUT = 10
 
         # What a request raises when the connection or the response fails:
-        # DNS, connect, TLS, timeout, a dropped connection, or a response
-        # Net::HTTP cannot parse. Each one becomes a NetworkError.
+        # DNS, connect, TLS, timeout, a dropped connection, a response
+        # Net::HTTP cannot parse, or a body that ends early. Each one becomes
+        # a NetworkError. Zlib raises BufError for a gzip stream that ends
+        # early, and DataError for a body that is not gzip.
         TRANSPORT_ERRORS = [
           SystemCallError, SocketError, Timeout::Error, OpenSSL::SSL::SSLError, IOError,
-          Net::ProtocolError, Net::HTTPBadResponse, Net::HTTPHeaderSyntaxError
+          Net::ProtocolError, Net::HTTPBadResponse, Net::HTTPHeaderSyntaxError, Zlib::BufError
         ].freeze
+
+        # The Accept-Encoding header Net::HTTP sends by default.
+        ACCEPT_ENCODING = "gzip;q=1.0,deflate;q=0.6,identity;q=0.3"
+
+        # Content-Encoding values the client decompresses. Zlib reads a gzip
+        # or a zlib header for each.
+        DECOMPRESSED = %w[gzip x-gzip deflate].freeze
 
         def initialize
           @registry = {}
@@ -158,15 +167,35 @@ module Keycardai
           http.read_timeout = timeout || DEFAULT_TIMEOUT
           http.write_timeout = timeout || DEFAULT_TIMEOUT
           http.start unless http.started?
-          # Net::HTTP reads the body after the block returns, so +received+
-          # holds the status when the body does not decompress.
-          received = nil
-          response = http.request(request) { |res| received = res }
-          build_response(response, response.body.to_s)
-        rescue Zlib::Error => e
-          build_response(received, "", e)
+          # Net::HTTP does not report a gzip stream that ends early, so the
+          # client decompresses the body itself. Assigning Accept-Encoding
+          # turns off Net::HTTP's decompression.
+          request["Accept-Encoding"] = ACCEPT_ENCODING if request.decode_content
+          response = http.request(request)
+          build_response(response, decompress(response))
         rescue *TRANSPORT_ERRORS => e
           raise NetworkError, "request to #{uri.host} failed: #{e.class}"
+        rescue Zlib::Error => e
+          build_response(response, "", e)
+        end
+
+        # Returns the body, decompressed when its Content-Encoding is gzip or
+        # deflate. Raises Zlib::BufError when the compressed stream ends
+        # early, and Zlib::DataError when the body is not compressed data.
+        def decompress(response)
+          body = response.body.to_s
+          return body if body.empty? || !DECOMPRESSED.include?(response["content-encoding"]&.downcase)
+
+          inflate = Zlib::Inflate.new(32 + Zlib::MAX_WBITS)
+          begin
+            decoded = inflate.inflate(body)
+            raise Zlib::BufError, "the compressed stream ends early" unless inflate.finished?
+          ensure
+            inflate.close
+          end
+          response.delete("content-encoding")
+          response["content-length"] = decoded.bytesize.to_s if response["content-length"]
+          decoded
         end
 
         def build_response(response, body, body_error = nil)
@@ -183,6 +212,9 @@ module Keycardai
           http.use_ssl = uri.scheme == "https"
           # Net::HTTP retries a failed GET once by default.
           http.max_retries = 0
+          # By default Net::HTTP returns a body shorter than its
+          # Content-Length without an error.
+          http.ignore_eof = false
           sessions[key] = http
         end
 

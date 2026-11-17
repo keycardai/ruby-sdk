@@ -7,10 +7,10 @@ require "zlib"
 # A local HTTP/1.1 server for tests that need the real NetHTTPClient, such as
 # a body that does not decompress or a request that times out. The block gets
 # each request's method and path and returns the raw response bytes, :hang
-# to accept the request and never answer, or :close to close the connection
-# without answering. Connections stay open between
-# requests until the client closes them, and +connections+ counts how many
-# the server accepted.
+# to accept the request and never answer, :close to close the connection
+# without answering, or [bytes, :close] to send the bytes and then close.
+# Connections stay open between requests until the client closes them, and
+# +connections+ counts how many the server accepted.
 class RawHTTPServer
   attr_reader :connections
 
@@ -47,9 +47,47 @@ class RawHTTPServer
 
   # A response with a gzip body that decompresses to +payload+ as JSON.
   def self.gzip_json(status, payload)
+    response(status, gzip(JSON.dump(payload)), "Content-Type" => "application/json", "Content-Encoding" => "gzip")
+  end
+
+  # A 200 whose body stops halfway. +body+ is :json or :gzip. +framing+ is
+  # :length for Content-Length, :chunked for one chunk that stops halfway,
+  # or :none for neither.
+  def self.cut(body, framing)
+    payload = JSON.dump({ "access_token" => "token", "token_type" => "Bearer", "padding" => "x" * 200 })
+    payload = gzip(payload) if body == :gzip
+    headers = { "Content-Type" => "application/json" }
+    headers["Content-Encoding"] = "gzip" if body == :gzip
+    headers.merge!(CUT_FRAMING.fetch(framing).call(payload.bytesize))
+    half = payload.byteslice(0, payload.bytesize / 2)
+    half = "#{payload.bytesize.to_s(16)}\r\n#{half}" if framing == :chunked
+    "HTTP/1.1 200 OK\r\n#{headers.map { |name, value| "#{name}: #{value}\r\n" }.join}\r\n#{half}"
+  end
+
+  # A 200 whose body arrives whole with Content-Length or chunked encoding,
+  # and holds the first half of a gzip stream. +framing+ is :length or
+  # :chunked.
+  def self.cut_gzip_stream(framing)
+    payload = gzip(JSON.dump({ "access_token" => "token", "token_type" => "Bearer", "padding" => "x" * 200 }))
+    half = payload.byteslice(0, payload.bytesize / 2)
+    headers = { "Content-Type" => "application/json", "Content-Encoding" => "gzip" }
+    return response(200, half, headers) if framing == :length
+
+    headers["Transfer-Encoding"] = "chunked"
+    "HTTP/1.1 200 OK\r\n#{headers.map { |name, value| "#{name}: #{value}\r\n" }.join}\r\n" \
+      "#{half.bytesize.to_s(16)}\r\n#{half}\r\n0\r\n\r\n"
+  end
+
+  CUT_FRAMING = {
+    length: ->(size) { { "Content-Length" => size.to_s } },
+    chunked: ->(_size) { { "Transfer-Encoding" => "chunked" } },
+    none: ->(_size) { {} }
+  }.freeze
+
+  def self.gzip(data)
     io = StringIO.new
-    Zlib::GzipWriter.wrap(io) { |gz| gz.write(JSON.dump(payload)) }
-    response(status, io.string, "Content-Type" => "application/json", "Content-Encoding" => "gzip")
+    Zlib::GzipWriter.wrap(io) { |gz| gz.write(data) }
+    io.string
   end
 
   def self.response(status, body, headers = {})
@@ -73,6 +111,7 @@ class RawHTTPServer
       response = @handler.call(*request)
       break if response == :hang
       break socket.close if response == :close
+      break socket.write(response.first) && socket.close if response.is_a?(Array)
 
       socket.write(response)
     end
