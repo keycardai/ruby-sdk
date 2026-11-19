@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "pp"
 require "tmpdir"
 
 # Conformance suite for keycard-sdk-spec specs/oauth-client/device-authorization.md
@@ -173,6 +174,28 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
         .to raise_error(Keycardai::OAuth::OAuthError, "device authorization endpoint returned invalid_target") { |e|
           expect([e.error, e.status]).to eq(["invalid_target", 400])
         }
+    end
+  end
+
+  describe "printing an authorization" do
+    let(:shown) do
+      "#<data Keycardai::OAuth::DeviceAuthorization user_code=\"WDJB-MJHT\", " \
+        "verification_uri=\"https://acme.test/device\", verification_uri_complete=nil, expires_in=600, " \
+        "interval=5, expires_at=#{(now + 600).inspect}>"
+    end
+
+    [
+      { method: :inspect, suffix: "" },
+      { method: :to_s, suffix: "" },
+      { method: :pretty_inspect, suffix: "\n" }
+    ].each do |example|
+      it "#{example[:method]} leaves out device_code" do
+        expect(authorization.public_send(example[:method])).to eq(shown + example[:suffix])
+      end
+    end
+
+    it "keeps device_code in to_h, so a stored authorization can poll" do
+      expect(authorization.to_h[:device_code]).to eq("dc_123")
     end
   end
 

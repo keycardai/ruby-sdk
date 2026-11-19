@@ -29,6 +29,22 @@ module Keycardai
         super
       end
 
+      # Shows every member except device_code. A public client redeems
+      # device_code with its client_id alone (RFC 8628 §3.4). #to_h still
+      # includes it, so a stored authorization can poll.
+      #
+      # @return [String]
+      def inspect
+        shown = to_h.except(:device_code).map { |name, value| "#{name}=#{value.inspect}" }
+        "#<data #{self.class} #{shown.join(", ")}>"
+      end
+      alias_method :to_s, :inspect
+
+      # Used by pp.
+      def pretty_print(printer)
+        printer.text(inspect)
+      end
+
       # Parse a 2xx device authorization response.
       #
       # @param response [HTTP::Response]
