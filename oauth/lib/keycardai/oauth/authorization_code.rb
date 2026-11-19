@@ -38,8 +38,12 @@ module Keycardai
     end
 
     # Exchange an authorization code for a token (RFC 6749 §4.1.3). A public
-    # client sends its client_id in the body; a confidential client
-    # authenticates with HTTP Basic and omits client_id from the body.
+    # client sends its client_id in the body. A confidential client
+    # authenticates with HTTP Basic and omits client_id from the body. A
+    # client with a credential adds the headers and form fields of the
+    # credential's client_authentication. The code is bound to the authorize
+    # URL's client_id, so a credential must authenticate as that client; the
+    # zone rejects a mismatch with invalid_grant.
     #
     # @param issuer [String] the zone's issuer URL; supplies the token endpoint
     # @param code [String] the authorization code from the redirect
@@ -47,33 +51,37 @@ module Keycardai
     # @param redirect_uri [String] must match the authorization request
     # @param client_id [String, nil] public-client identifier
     # @param client_secret [String, nil] confidential-client secret; requires client_id
+    # @param credential [#client_authentication, nil] authenticates the
+    #   exchange in place of client_id and client_secret
     # @param http_client [#get, #post_form] pluggable transport
     # @param timeout [Numeric, nil]
     # @return [TokenResponse]
+    # @raise [ConfigurationError] before any request: client_secret without
+    #   client_id, credential set together with client_id or client_secret, or
+    #   a credential without client_authentication
     # @raise [OAuthError] an RFC 6749 §5.2 error response (invalid_grant, ...)
-    # @raise [HTTPError, ProtocolError, NetworkError, ConfigurationError]
+    # @raise [HTTPError, ProtocolError, NetworkError]
     def self.exchange_authorization_code(issuer, code:, code_verifier:, redirect_uri:, client_id: nil,
-                                         client_secret: nil,
+                                         client_secret: nil, credential: nil,
                                          http_client: HTTP::NetHTTPClient.new, timeout: nil)
       raise ConfigurationError, "client_secret requires client_id" if client_secret && client_id.nil?
 
+      ClientAuth.validate(credential: credential, client_id: client_id, client_secret: client_secret) if credential
       metadata = fetch_authorization_server_metadata(issuer, http_client: http_client, timeout: timeout)
       endpoint = metadata.token_endpoint ||
                  raise(ProtocolError.new("metadata for #{issuer} has no token_endpoint", code: "invalid_metadata"))
 
-      # A confidential client authenticates with Basic and omits client_id
-      # from the body; a public client carries client_id in the body.
-      params = {
-        "grant_type" => GrantType::AUTHORIZATION_CODE,
-        "code" => code,
-        "code_verifier" => code_verifier,
-        "redirect_uri" => redirect_uri,
-        "client_id" => client_secret ? nil : client_id
-      }.compact
+      params = [["grant_type", GrantType::AUTHORIZATION_CODE], ["code", code], ["code_verifier", code_verifier],
+                ["redirect_uri", redirect_uri]]
       headers = { "Accept" => "application/json" }
-      headers["Authorization"] = HTTP.basic_authorization(client_id, client_secret) if client_secret
+      # With neither a client_id nor a credential, the exchange carries no client authentication.
+      if credential || client_id
+        params, headers = ClientAuth.apply(params, headers, issuer: issuer, endpoint: endpoint, credential: credential,
+                                                            client_id: client_id, client_secret: client_secret)
+      end
 
-      TokenRequests.parse_response(http_client.post_form(endpoint, params, headers: headers, timeout: timeout))
+      # No key repeats in a code exchange, so the pairs become a hash.
+      TokenRequests.parse_response(http_client.post_form(endpoint, params.to_h, headers: headers, timeout: timeout))
     end
 
     # Redeem a refresh token for a new access token (RFC 6749 §6). Client

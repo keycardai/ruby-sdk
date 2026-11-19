@@ -78,6 +78,24 @@ RSpec.describe Keycardai::OAuth::TokenExchangeClient do
     expect(call.headers).not_to have_key("Authorization")
   end
 
+  it "4a: client_assertion, client_assertion_type, and client_id are form-encoded with no Basic header" do
+    http = token_http
+    client(http).exchange_token(
+      subject_token: "at_subject",
+      client_assertion: "assertion-jwt",
+      client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+      client_id: "app_123"
+    )
+
+    call = token_call(http)
+    expect(call.params).to include(
+      "client_assertion" => "assertion-jwt",
+      "client_assertion_type" => "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+      "client_id" => "app_123"
+    )
+    expect(call.headers).not_to have_key("Authorization")
+  end
+
   it "5: parses a 2xx response into the token result" do
     response = client(token_http).exchange_token(subject_token: "at_subject")
 

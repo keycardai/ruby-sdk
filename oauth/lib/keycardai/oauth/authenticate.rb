@@ -25,6 +25,9 @@ module Keycardai
     # @param port [Integer] loopback port; 0 binds an ephemeral port
     # @param callback_timeout [Numeric] seconds to wait for the redirect
     # @param client_secret [String, nil] confidential clients only
+    # @param credential [#client_authentication, nil] confidential clients
+    #   only, in place of client_secret: client_id goes on the authorize URL
+    #   only, and the credential authenticates the code exchange
     # @param verifier_length [Integer] PKCE verifier length, 43 to 128
     # @param http_client [#get, #post_form] pluggable transport
     # @param browser_opener [#call, nil] receives the authorize URL; defaults
@@ -34,10 +37,13 @@ module Keycardai
     # @raise [InteractionTimeoutError] the user did not complete the redirect
     # @raise [OAuthError] the authorization server denied the request
     # @raise [ProtocolError] the redirect's state did not match (code state_mismatch)
+    # @raise [ConfigurationError] credential combined with client_secret, or
+    #   without client_authentication
     def self.authenticate(issuer:, client_id:, scope: nil, resources: [], port: DEFAULT_CALLBACK_PORT,
-                          callback_timeout: DEFAULT_CALLBACK_TIMEOUT, client_secret: nil,
+                          callback_timeout: DEFAULT_CALLBACK_TIMEOUT, client_secret: nil, credential: nil,
                           verifier_length: PKCE::DEFAULT_VERIFIER_LENGTH,
                           http_client: HTTP::NetHTTPClient.new, browser_opener: nil, timeout: nil)
+      ClientAuth.validate(credential: credential, client_id: nil, client_secret: client_secret) if credential
       authorization_endpoint = authorization_endpoint_for(issuer, http_client, timeout)
       pair = PKCE.generate_pair(length: verifier_length)
       state = SecureRandom.urlsafe_base64(24)
@@ -47,12 +53,11 @@ module Keycardai
                             client_id: client_id, scope: scope, resources: resources,
                             browser_opener: browser_opener)
         code = server.wait_for_code(state: state, timeout: callback_timeout)
-        exchange_authorization_code(
-          issuer,
-          code: code, code_verifier: pair.code_verifier, redirect_uri: server.redirect_uri,
-          client_id: client_id, client_secret: client_secret,
-          http_client: http_client, timeout: timeout
-        )
+        # With a credential, client_id goes on the authorize URL only.
+        exchange_authorization_code(issuer, code: code, code_verifier: pair.code_verifier,
+                                            redirect_uri: server.redirect_uri,
+                                            client_id: credential ? nil : client_id, client_secret: client_secret,
+                                            credential: credential, http_client: http_client, timeout: timeout)
       end
     end
 
