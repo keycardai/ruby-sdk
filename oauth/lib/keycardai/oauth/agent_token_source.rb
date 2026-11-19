@@ -68,8 +68,9 @@ module Keycardai
       # @param scopes [Array<String>] sent exactly as given
       # @return [TokenResponse] +expires_in+ is nil when the agent sent no
       #   expiry; +scope+ is nil unless the agent reported the grant
-      # @raise [ConfigurationError] an empty resource, or a default socket that
-      #   cannot be resolved
+      # @raise [ConfigurationError] an empty resource, a control character in
+      #   org or zone, a string that is not valid UTF-8, or a default socket
+      #   that cannot be resolved
       # @raise [NetworkError] the socket cannot be reached; names the path
       # @raise [AgentError] the agent refused
       # @raise [AgentResponseError] the agent's 200 response is unusable
@@ -77,6 +78,7 @@ module Keycardai
       def resource_token(resource:, scopes: [])
         raise ConfigurationError, "resource is required" if resource.nil? || resource.empty?
 
+        validate_request(resource, scopes)
         socket = AgentSocket.resolve(socket: @socket, env: @env)
         response = issue(socket, resource, scopes)
         raise error_for(response) unless response.status == 200
@@ -85,6 +87,26 @@ module Keycardai
       end
 
       private
+
+      # org and zone travel as header values, and every string as JSON; a
+      # control character or invalid UTF-8 would otherwise escape as
+      # ArgumentError or JSON::GeneratorError rather than an SDK error.
+      def validate_request(resource, scopes)
+        strings = { "resource" => [resource], "scopes" => Array(scopes), "workload" => [@workload],
+                    "app_id" => [@app_id], "org" => [@org], "zone" => [@zone] }
+        strings.each do |name, values|
+          raise ConfigurationError, "#{name} is not valid UTF-8" unless values.all? { |v| !v.is_a?(String) || utf8?(v) }
+        end
+        { "org" => @org, "zone" => @zone }.each do |name, value|
+          raise ConfigurationError, "#{name} contains a control character" if CONTROL_CHARACTER.match?(value.to_s)
+        end
+      end
+
+      def utf8?(value)
+        value.encode(Encoding::UTF_8).valid_encoding?
+      rescue EncodingError
+        false
+      end
 
       def issue(socket, resource, scopes)
         client = @http_client || HTTP::UnixSocketClient.new(socket.path)
