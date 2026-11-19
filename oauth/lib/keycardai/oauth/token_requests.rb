@@ -42,19 +42,20 @@ module Keycardai
       # response whose body does not decompress.
       #
       # @param response [HTTP::Response]
+      # @param endpoint_name [String] names the endpoint in the message
       # @return [OAuthError, HTTPError]
-      def self.error_for(response)
+      def self.error_for(response, endpoint_name: "token endpoint")
         payload = begin
           JSON.parse(response.body)
         rescue JSON::ParserError
           nil
         end
         unless payload.is_a?(Hash) && payload["error"].is_a?(String)
-          return HTTPError.new("token endpoint returned HTTP #{response.status}",
+          return HTTPError.new("#{endpoint_name} returned HTTP #{response.status}",
                                status: response.status, body: response.body)
         end
 
-        OAuthError.new("token endpoint returned #{payload["error"]}",
+        OAuthError.new("#{endpoint_name} returned #{payload["error"]}",
                        error: payload["error"], error_description: payload["error_description"],
                        error_uri: payload["error_uri"], status: response.status, body: response.body)
       end
