@@ -263,12 +263,15 @@ RSpec.describe Keycardai::OAuth::AgentTokenSource do
       end
     end
 
-    it "33: a token containing CR LF is an AgentResponseError that does not echo the token" do
-      http = agent_http(payload: { "token" => "secret\r\nInjected: header" })
+    it "33: a token containing a C0 control or DEL is an AgentResponseError that does not echo the token" do
+      ["\r\nInjected: header", "\0", "\t", "\x1f", "\x7f"].each do |control|
+        http = agent_http(payload: { "token" => "secret#{control}tail" })
 
-      expect { mint(source(http)) }.to raise_error(Keycardai::OAuth::AgentResponseError) { |e|
-        expect(e.message).not_to include("secret")
-      }
+        expect { mint(source(http)) }.to raise_error(Keycardai::OAuth::AgentResponseError) { |e|
+          expect(e.message).not_to include("secret")
+        }
+      end
+      expect(mint(source(agent_http(payload: { "token" => "printable-é~!" }))).access_token).to eq("printable-é~!")
     end
 
     it "34: retryable? is true for resource_exhausted and unavailable only" do
@@ -365,16 +368,86 @@ RSpec.describe Keycardai::OAuth::AgentTokenSource do
         }
     end
 
-    it "an unparseable expiresAt is an AgentResponseError" do
-      http = agent_http(payload: { "token" => "t", "expiresAt" => "2026-11-17 12:00:00" })
+    ["2026-11-17 12:00:00", "2026-11-17T12:00:00", "2026-13-45T00:00:00Z", "2026-11-17T12:00:00.1234567890Z",
+     1_795_000_000].each do |expires_at|
+      it "an expiresAt of #{expires_at.inspect} is an AgentResponseError" do
+        http = agent_http(payload: { "token" => "t", "expiresAt" => expires_at })
 
-      expect { mint(source(http)) }.to raise_error(Keycardai::OAuth::AgentResponseError, /expiresAt/)
+        expect { mint(source(http)) }.to raise_error(Keycardai::OAuth::AgentResponseError, /expiresAt/)
+      end
     end
 
-    it "a scopes value that is not a list of strings is an AgentResponseError" do
-      http = agent_http(payload: { "token" => "t", "scopes" => "a b" })
+    it "an expiresAt with an offset and a lowercase t and z is accepted" do
+      clock = -> { Time.utc(2026, 11, 17, 9, 59, 0) }
+      offset = agent_http(payload: { "token" => "t", "expiresAt" => "2026-11-17T12:00:00+02:00" })
+      lowercase = agent_http(payload: { "token" => "t", "expiresAt" => "2026-11-17t10:00:00z" })
 
-      expect { mint(source(http)) }.to raise_error(Keycardai::OAuth::AgentResponseError, /scopes/)
+      expect(mint(source(offset, clock: clock)).expires_in).to eq(60)
+      expect(mint(source(lowercase, clock: clock)).expires_in).to eq(60)
+    end
+
+    ["a b", %w[a] + [1]].each do |scopes|
+      it "a scopes value of #{scopes.inspect}, not a list of strings, is an AgentResponseError" do
+        http = agent_http(payload: { "token" => "t", "scopes" => scopes })
+
+        expect { mint(source(http)) }.to raise_error(Keycardai::OAuth::AgentResponseError, /scopes/)
+      end
+    end
+
+    it "an empty reported scopes list leaves scope absent" do
+      expect(mint(source(agent_http(payload: { "token" => "t", "scopes" => [] }))).scope).to be_nil
+    end
+
+    it "the token type is Bearer" do
+      expect(mint(source(agent_http)).token_type).to eq("Bearer")
+    end
+
+    it "the socket is resolved again on every call, so a changed environment takes effect on the next" do
+      FakeAgent.short_tmpdir do |dir|
+        FakeAgent.serve(File.join(dir, "first.sock")) do |first|
+          FakeAgent.serve(File.join(dir, "second.sock")) do |second|
+            env = { "KEYCARD_SOCKET" => first.path }
+            subject = described_class.new(env: env)
+            mint(subject)
+            env["KEYCARD_SOCKET"] = second.path
+            mint(subject)
+
+            expect([first.requests.size, second.requests.size]).to eq([1, 1])
+          end
+        end
+      end
+    end
+
+    {
+      "org" => { org: "org\r\nX-Injected: 1" },
+      "zone" => { zone: "zone\0" }
+    }.each do |name, options|
+      it "a control character in #{name} is a configuration error and nothing is sent" do
+        http = agent_http
+
+        expect { mint(source(http, **options)) }
+          .to raise_error(Keycardai::OAuth::ConfigurationError, /#{name} contains a control character/)
+        expect(http.calls).to be_empty
+      end
+    end
+
+    it "a string that is not valid UTF-8 is a configuration error and nothing is sent" do
+      http = agent_http
+
+      expect { mint(source(http), resource: "https://api.acme.test/\xff") }
+        .to raise_error(Keycardai::OAuth::ConfigurationError, /resource is not valid UTF-8/)
+      expect { mint(source(http, workload: "caf\xC3\xA9".b)) }
+        .to raise_error(Keycardai::OAuth::ConfigurationError, /workload is not valid UTF-8/)
+      expect { mint(source(http), scopes: ["read", "\xff"]) }
+        .to raise_error(Keycardai::OAuth::ConfigurationError, /scopes is not valid UTF-8/)
+      expect(http.calls).to be_empty
+    end
+
+    it "an over-long socket path is a NetworkError naming it" do
+      path = "/#{"a" * 200}/agent.sock"
+
+      expect { mint(described_class.new(socket: path)) }
+        .to raise_error(Keycardai::OAuth::NetworkError, a_string_including(path, "the socket option"))
     end
 
     it "a chunked response over the socket is decoded" do
