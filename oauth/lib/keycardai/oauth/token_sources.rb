@@ -10,8 +10,9 @@ module Keycardai
     # Covers EKS (AWS_* env vars), AKS (AZURE_FEDERATED_TOKEN_FILE), any
     # Kubernetes projected service-account token, and file-mode CI providers.
     #
-    # Path discovery through the well-known env vars below is the one blessed
-    # environment read in the SDK (a deliberate platform convention). An
+    # Path discovery through the well-known env vars below is one of the SDK's
+    # two sanctioned environment reads (a deliberate platform convention; the
+    # other is AgentTokenSource's agent socket). An
     # explicit token_file_path wins; env_var_name is consulted first when
     # given. The resolved file is validated at construction (exists,
     # non-empty), preserving fail-fast behavior.

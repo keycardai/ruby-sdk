@@ -11,7 +11,7 @@ reproducible with the commands in the last section.
 | Gems | `keycardai-oauth`, `keycardai-mcp`, `keycardai-a2a` |
 | Capability specs covered | 20 of 23, 2 excluded on purpose, `delegated-access/as-itself` an open gap |
 | Partial coverage | `authorization-code-pkce` v3 rows 8 to 11 (the stateless web-app begin/complete pair) are unshipped; Ruby covers the flow's building blocks and the loopback `authenticate` |
-| Conformance examples | 173 (plus 6 load/sanity checks, 179 total) |
+| Conformance examples | 233 (plus 6 load/sanity checks, 239 total) |
 | Live-zone integration rows | 13 of 13 passing against a real zone |
 | A2A delegation checks | 11 of 11 hermetic, plus a live run |
 | MCP server end-to-end checks | 8 of 8 hermetic, against the official `mcp` gem |
@@ -43,7 +43,7 @@ which are labelled without a row number.
 | `application-credentials/workload-identity` | `workload_identity_spec.rb` | 10 |
 | `delegated-access/access-context` | `access_context_spec.rb` | 19 |
 | `delegated-access/impersonation` | `impersonation_spec.rb` | 5 |
-| `delegated-access/local-agent-token-source` | `local_agent_token_source_spec.rb` | 47 (unit rows 19 to 23 cover an SDK-side cache, which Ruby does not keep; integration rows run against a fake agent) |
+| `delegated-access/local-agent-token-source` | `local_agent_token_source_spec.rb` | 60 (unit rows 19 to 23 cover an SDK-side cache, which Ruby does not keep; integration rows run against a fake agent) |
 | `multi-zone-and-ops/multi-zone-support` | `multi_zone_support_spec.rb` | 6 |
 
 ### keycardai-mcp
@@ -165,7 +165,7 @@ UserInfo, and the spec-version 3 authorization-code revision:
 | --- | --- |
 | `application-credentials/eks-workload-identity` | Folded into `workload-identity` as a deprecated alias in the sibling SDKs. Ruby is new and ships no deprecated surface; `FileTokenSource` covers the contract, including the same four-variable discovery list at exact parity. |
 | `multi-zone-and-ops/per-user-token-cache` | Bound to `@keycardai/cloudflare`; no Ruby counterpart. |
-| `base.md` | Cross-cutting terminology and principles, no Testing table. Its rules are honoured throughout, notably constructor-injected configuration with no implicit environment reads. |
+| `base.md` | Cross-cutting terminology and principles, no Testing table. Its rules are honoured throughout, notably constructor-injected configuration with no implicit environment reads beyond the two exceptions `idiom-profile.md` sanctions. |
 | `framework-integrations/*` | Governance documents rather than generatable contracts. The Rack integration is judged against the FRAMEWORK-INTEGRATIONS.md checklist instead. |
 
 Every capability is now proven live, including the production `grant` path. It
@@ -180,8 +180,9 @@ calling client owning the resource in the token's `aud`.
 Ruby-specific expression choices, with the reasoning, are in
 [idiom-profile.md](idiom-profile.md). The load-bearing ones: sync-only with
 thread-safe caches, keyword arguments, `Keycardai::Error` as the taxonomy root,
-Rack as the framework seam, no implicit environment reads except the blessed
-`FileTokenSource` discovery list, and `get_` prefixes dropped in favour of
+Rack as the framework seam, no implicit environment reads except the two sanctioned
+exceptions (the `FileTokenSource` discovery list and `AgentTokenSource`'s
+agent socket), and `get_` prefixes dropped in favour of
 predicates ending in `?` while `set_*` mutator names are kept because they are
 contract.
 
@@ -189,7 +190,7 @@ contract.
 
 ```sh
 bundle install
-bundle exec rake                      # 179 examples + RuboCop
+bundle exec rake                      # 325 examples + RuboCop
 
 cd examples/mcp-server
 bin/selftest                          # 8 checks, no zone needed
