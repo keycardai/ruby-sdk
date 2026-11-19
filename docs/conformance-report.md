@@ -10,7 +10,7 @@ reproducible with the commands in the last section.
 | --- | --- |
 | Gems | `keycardai-oauth`, `keycardai-mcp`, `keycardai-a2a` |
 | Capability specs covered | 19 of 22, 2 excluded on purpose, `delegated-access/as-itself` an open gap |
-| Partial coverage | `authorization-code-pkce` v3 rows 8 to 11 (the stateless web-app begin/complete pair) are unshipped; Ruby covers the flow's building blocks and the loopback `authenticate` |
+| Partial coverage | `authorization-code-pkce` rows 8 to 11, 19, and 22 (the stateless web-app begin/complete pair) are unshipped; Ruby covers the flow's building blocks, refresh and the code exchange with a credential, and the loopback `authenticate` |
 | Conformance examples | 173 (plus 6 load/sanity checks, 179 total) |
 | Live-zone integration rows | 13 of 13 passing against a real zone |
 | A2A delegation checks | 11 of 11 hermetic, plus a live run |
@@ -34,10 +34,10 @@ which are labelled without a row number.
 | `jwt-jwks/jwks-caching` | `jwks_caching_spec.rb` | 11 |
 | `oauth-client/authorization-server-discovery` | `authorization_server_discovery_spec.rb` | 9 |
 | `oauth-client/userinfo` | `userinfo_spec.rb` | 8 |
-| `oauth-client/client-credentials` | `client_credentials_spec.rb` | 6 |
-| `oauth-client/token-exchange` | `token_exchange_spec.rb` | 10 |
+| `oauth-client/client-credentials` | `client_credentials_spec.rb` | 9 |
+| `oauth-client/token-exchange` | `token_exchange_spec.rb` | 11 |
 | `oauth-client/dynamic-client-registration` | `dynamic_client_registration_spec.rb` | 5 |
-| `oauth-client/authorization-code-pkce` | `authorization_code_pkce_spec.rb` + `authenticate_flow_spec.rb` | 17 |
+| `oauth-client/authorization-code-pkce` | `authorization_code_pkce_spec.rb` + `authenticate_flow_spec.rb` | 23 |
 | `application-credentials/client-secret` | `client_secret_spec.rb` | 6 |
 | `application-credentials/web-identity` | `web_identity_spec.rb` | 8 |
 | `application-credentials/workload-identity` | `workload_identity_spec.rb` | 10 |

@@ -54,6 +54,34 @@ RSpec.describe "Authenticate loopback flow" do
     expect(seen["redirect_uri"]).to match(%r{\Ahttp://127\.0\.0\.1:\d+/callback\z})
   end
 
+  it "with a credential, puts client_id on the authorize URL only and authenticates the exchange with it" do
+    seen = nil
+    http = token_http
+    browser = fake_browser do |params|
+      seen = params
+      { "code" => "auth-code", "state" => params.fetch("state") }
+    end
+    credential = Keycardai::OAuth::WorkloadIdentity.new(source: -> { "platform-token" }, client_id: "cid")
+
+    Keycardai::OAuth.authenticate(issuer: zone.issuer, client_id: "cid", credential: credential, port: 0,
+                                  callback_timeout: 5, http_client: http, browser_opener: browser)
+
+    token_call = http.calls.find { |call| call.url == zone.token_url }
+    expect(seen).to include("client_id" => "cid")
+    expect(seen).not_to have_key("client_assertion")
+    expect(token_call.params).to include("client_id" => "cid", "client_assertion" => "platform-token")
+    expect(token_call.headers).not_to have_key("Authorization")
+  end
+
+  it "rejects a credential combined with a client_secret before opening the browser" do
+    credential = Keycardai::OAuth::ClientSecret.new("cid", "csecret")
+    opened = false
+
+    expect { authenticate(->(_url) { opened = true }, credential: credential, client_secret: "csecret") }
+      .to raise_error(Keycardai::OAuth::ConfigurationError)
+    expect(opened).to be(false)
+  end
+
   it "rejects a redirect whose state does not match" do
     browser = fake_browser { |_params| { "code" => "auth-code", "state" => "forged" } }
 
