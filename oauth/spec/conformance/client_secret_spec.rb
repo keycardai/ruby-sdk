@@ -57,4 +57,85 @@ RSpec.describe Keycardai::OAuth::ClientSecret do
     )
     expect(params.keys).not_to include("client_id", "client_secret", "client_assertion")
   end
+
+  describe "8: HTTP Basic percent-encodes the client_id and client_secret (spec-version 3)" do
+    let(:zone) { ZoneFixture.new }
+    # base64("ua%3Aclient:a%20b%2B%2541"), written out so the test does not
+    # share the encoder under test.
+    let(:expected) { "Basic dWElM0FjbGllbnQ6YSUyMGIlMkIlMjU0MQ==" }
+    let(:http) do
+      FakeHTTPClient.new do |url, _params|
+        url == zone.metadata_url ? json_response(zone.metadata) : json_response({ "access_token" => "at" })
+      end
+    end
+
+    def token_call_header(http)
+      http.calls.find { |call| call.url == zone.token_url }.headers["Authorization"]
+    end
+
+    # Every operation that sends a raw client_id and client_secret with HTTP
+    # Basic. Each one returns the header it sent.
+    {
+      "ClientSecret#authorization_header" => lambda { |_http|
+        described_class.new("ua:client", "a b+%41").authorization_header
+      },
+      "TokenExchangeClient" => lambda { |http|
+        Keycardai::OAuth::TokenExchangeClient.new(issuer: zone.issuer, client_id: "ua:client",
+                                                  client_secret: "a b+%41", http_client: http)
+                                             .exchange_token(subject_token: "at_subject")
+        token_call_header(http)
+      },
+      "ClientCredentialsClient" => lambda { |http|
+        Keycardai::OAuth::ClientCredentialsClient.new(issuer: zone.issuer, client_id: "ua:client",
+                                                      client_secret: "a b+%41", http_client: http)
+                                                 .request_token
+        token_call_header(http)
+      },
+      "exchange_authorization_code" => lambda { |http|
+        Keycardai::OAuth.exchange_authorization_code(zone.issuer, code: "code", code_verifier: "verifier",
+                                                                  redirect_uri: "http://127.0.0.1/cb",
+                                                                  client_id: "ua:client", client_secret: "a b+%41",
+                                                                  http_client: http)
+        token_call_header(http)
+      },
+      "refresh_authorization" => lambda { |http|
+        Keycardai::OAuth.refresh_authorization(zone.issuer, refresh_token: "rt", client_id: "ua:client",
+                                                            client_secret: "a b+%41", http_client: http)
+        token_call_header(http)
+      }
+    }.each do |name, operation|
+      it "#{name} sends the encoded header" do
+        expect(instance_exec(http, &operation)).to eq(expected)
+      end
+    end
+
+    # Each value encodes to the exact string given, and that string decodes
+    # back to the value with a percent decoder, which Keycard zones use, and
+    # with an RFC 6749 Appendix B form decoder.
+    [
+      ["a colon", "ua:client", "ua%3Aclient"],
+      ["base64 characters", "ab+/cd==", "ab%2B%2Fcd%3D%3D"],
+      ["a space", "a b", "a%20b"],
+      ["a literal percent escape", "%41", "%2541"],
+      ["unreserved characters", "AZaz09-._~", "AZaz09-._~"],
+      ["characters a form encoder may leave as they are", "!*'()", "%21%2A%27%28%29"],
+      ["non-Latin-1 text", "пароль 🔑", "%D0%BF%D0%B0%D1%80%D0%BE%D0%BB%D1%8C%20%F0%9F%94%91"],
+      ["an ISO-8859-1 string", "caf\xE9".dup.force_encoding(Encoding::ISO_8859_1), "caf%C3%A9"]
+    ].each do |name, value, encoded|
+      it "encodes #{name} and round-trips it through both decoders" do
+        credentials = Keycardai::OAuth::HTTP.basic_authorization(value, value).delete_prefix("Basic ").unpack1("m0")
+
+        expect(credentials).to eq("#{encoded}:#{encoded}")
+        expect(URI.decode_uri_component(encoded)).to eq(value.encode(Encoding::UTF_8))
+        expect(URI.decode_www_form_component(encoded)).to eq(value.encode(Encoding::UTF_8))
+      end
+    end
+
+    it "encodes a binary string byte for byte" do
+      header = Keycardai::OAuth::HTTP.basic_authorization("caf\xC3\xA9".b, "\xFF".b)
+      credentials = header.delete_prefix("Basic ").unpack1("m0")
+
+      expect(credentials).to eq("caf%C3%A9:%FF")
+    end
+  end
 end
