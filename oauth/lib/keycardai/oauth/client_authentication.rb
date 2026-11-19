@@ -16,6 +16,20 @@ module Keycardai
       def initialize(headers: {}, params: {})
         super
       end
+
+      # Shows header and form field names only. The values include a client
+      # secret or a client assertion. NEVER log #to_h.
+      #
+      # @return [String]
+      def inspect
+        "#<data #{self.class} headers=#{headers.keys.inspect}, params=#{params.keys.inspect}>"
+      end
+      alias_method :to_s, :inspect
+
+      # Used by pp.
+      def pretty_print(printer)
+        printer.text(inspect)
+      end
     end
   end
 end

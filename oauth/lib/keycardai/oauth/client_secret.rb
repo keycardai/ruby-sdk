@@ -74,6 +74,21 @@ module Keycardai
         ClientAuthentication.new(headers: { "Authorization" => authorization_header(issuer: issuer) })
       end
 
+      # Shows the client ID, or the issuers of a multi-zone credential. Never
+      # shows a client secret.
+      #
+      # @return [String]
+      def inspect
+        shown = multi_zone? ? "issuers=#{issuers.inspect}" : "client_id=#{@pair.first.inspect}"
+        "#<#{self.class} #{shown}>"
+      end
+      alias to_s inspect
+
+      # Used by pp.
+      def pretty_print(printer)
+        printer.text(inspect)
+      end
+
       # Build the token-exchange form parameters. Client authentication goes
       # in the Basic header, never in the body.
       #
