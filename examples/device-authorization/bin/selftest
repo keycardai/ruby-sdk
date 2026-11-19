@@ -1,0 +1,95 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Hermetic end-to-end run of bin/device-login against a stub zone. The stub
+# answers the first poll with authorization_pending and the second with a
+# 503, so the example resumes once before it gets a token. No network, no
+# live zone.
+
+require "bundler/setup"
+require "json"
+require "open3"
+require "rbconfig"
+require "webrick"
+
+failures = []
+check = lambda do |name, condition|
+  puts(condition ? "  ok   #{name}" : "  FAIL #{name}")
+  failures << name unless condition
+end
+
+server = WEBrick::HTTPServer.new(Port: 0, BindAddress: "127.0.0.1", Logger: WEBrick::Log.new(File::NULL),
+                                 AccessLog: [])
+issuer = "http://127.0.0.1:#{server.config[:Port]}"
+requests = []
+polls = 0
+
+json = lambda do |res, status, payload|
+  res.status = status
+  res["content-type"] = "application/json"
+  res.body = JSON.dump(payload)
+end
+
+server.mount_proc("/.well-known/oauth-authorization-server") do |_req, res|
+  json.call(res, 200, { "issuer" => issuer, "token_endpoint" => "#{issuer}/oauth/token",
+                        "device_authorization_endpoint" => "#{issuer}/oauth/device_authorization" })
+end
+server.mount_proc("/oauth/device_authorization") do |req, res|
+  requests << [:device, URI.decode_www_form(req.body), req["authorization"]]
+  json.call(res, 200, { "device_code" => "dc_selftest", "user_code" => "WDJB-MJHT",
+                        "verification_uri" => "#{issuer}/device", "expires_in" => 60, "interval" => 1 })
+end
+server.mount_proc("/oauth/token") do |req, res|
+  form = URI.decode_www_form(req.body)
+  requests << [:token, form, req["authorization"]]
+  if form.assoc("grant_type").last == "refresh_token"
+    json.call(res, 200, { "access_token" => "at_narrowed", "token_type" => "Bearer", "expires_in" => 300 })
+  else
+    polls += 1
+    case polls
+    when 1 then json.call(res, 400, { "error" => "authorization_pending" })
+    when 2 then json.call(res, 503, { "error" => "temporarily_unavailable" })
+    else json.call(res, 200, { "access_token" => "at_device", "token_type" => "Bearer", "expires_in" => 3600,
+                               "scope" => "openid", "refresh_token" => "rt_device", "id_token" => "id.token" })
+    end
+  end
+end
+Thread.new { server.start }
+
+grant = ->(request) { request[1].assoc("grant_type")&.last }
+
+run = lambda do |env|
+  requests.clear
+  polls = 0
+  Open3.capture2e({ "KEYCARD_ZONE_URL" => issuer }.merge(env), RbConfig.ruby, File.expand_path("device-login", __dir__))
+end
+
+puts "confidential client, two resources:"
+output, status = run.call("KEYCARD_CLIENT_ID" => "ua:client", "KEYCARD_CLIENT_SECRET" => "a b+%41",
+                          "KEYCARD_RESOURCES" => "https://a.example https://b.example")
+check.call("exits 0", status.success?)
+check.call("prints the user code", output.include?("WDJB-MJHT"))
+check.call("resumes after the 503", output.include?("resuming in 1s"))
+check.call("prints the approval", output.include?("Approved. Token type Bearer, expires in 3600s"))
+check.call("refreshes for the first resource", output.include?("Token for https://a.example: expires in 300s."))
+basic = "Basic #{["ua%3Aclient:a%20b%2B%2541"].pack("m0")}"
+check.call("every request sends the percent-encoded Basic header", requests.all? { |r| r[2] == basic })
+device_form = requests.find { |r| r[0] == :device }[1]
+check.call("sends both resources", device_form.select { |k, _| k == "resource" }.map(&:last) ==
+                                   ["https://a.example", "https://b.example"])
+check.call("polls three times", requests.count { |r| grant.call(r)&.end_with?("device_code") } == 3)
+refresh_form = requests.find { |r| grant.call(r) == "refresh_token" }[1]
+check.call("refresh names one resource", refresh_form.select { |k, _| k == "resource" } == [["resource", "https://a.example"]])
+check.call("refresh sends the device flow's refresh_token", refresh_form.assoc("refresh_token") == %w[refresh_token rt_device])
+
+puts "public client:"
+output, status = run.call("KEYCARD_CLIENT_ID" => "public-client")
+check.call("exits 0", status.success?)
+check.call("prints the approval", output.include?("Approved."))
+check.call("sends client_id in every body and no Authorization header",
+           requests.all? { |r| r[1].assoc("client_id")&.last == "public-client" && r[2].nil? })
+check.call("does not refresh", requests.none? { |r| grant.call(r) == "refresh_token" })
+
+server.shutdown
+abort "#{failures.size} check(s) failed" unless failures.empty?
+puts "selftest passed"
