@@ -4,19 +4,28 @@
 # FakeHTTPClient replaces the transport entirely and cannot observe sessions,
 # so these specs fake Net::HTTP.new itself. No network.
 RSpec.describe Keycardai::OAuth::HTTP::NetHTTPClient do
+  # A plain 200 with a JSON body. +[]+ reads a header, as on Net::HTTPResponse.
+  fake_response = Struct.new(:code, :to_hash, :body) do
+    def [](name)
+      to_hash[name]&.first
+    end
+  end
+
   # Stands in for a Net::HTTP session: tracks started state, timeouts, and
   # the requests it served.
   fake_session = Class.new do
     attr_reader :host, :port, :requests
-    attr_accessor :use_ssl, :open_timeout, :read_timeout, :fail_with
+    attr_accessor :use_ssl, :open_timeout, :read_timeout, :write_timeout, :max_retries, :ignore_eof, :fail_with
 
-    def initialize(host, port)
+    def initialize(host, port, response_class)
+      @response_class = response_class
       @host = host
       @port = port
       @started = false
       @requests = []
       @open_timeout = 60
       @read_timeout = 60
+      @write_timeout = 60
     end
 
     def start
@@ -35,7 +44,7 @@ RSpec.describe Keycardai::OAuth::HTTP::NetHTTPClient do
       raise fail_with if fail_with
 
       @requests << req
-      Struct.new(:code, :to_hash, :body).new("200", { "content-type" => ["application/json"] }, "{}")
+      @response_class.new("200", { "content-type" => ["application/json"] }, "{}")
     end
   end
 
@@ -44,7 +53,7 @@ RSpec.describe Keycardai::OAuth::HTTP::NetHTTPClient do
 
   before do
     allow(Net::HTTP).to receive(:new) do |host, port|
-      fake_session.new(host, port).tap { |s| sessions << s }
+      fake_session.new(host, port, fake_response).tap { |s| sessions << s }
     end
   end
 
@@ -78,16 +87,16 @@ RSpec.describe Keycardai::OAuth::HTTP::NetHTTPClient do
   it "applies the timeout per request and restores the 10 second default when absent" do
     client.get("https://zone.example/a", timeout: 2.5)
     session = sessions.first
-    expect([session.open_timeout, session.read_timeout]).to eq([2.5, 2.5])
+    expect([session.open_timeout, session.read_timeout, session.write_timeout]).to eq([2.5, 2.5, 2.5])
 
     client.get("https://zone.example/b")
-    expect([session.open_timeout, session.read_timeout]).to eq([10, 10])
+    expect([session.open_timeout, session.read_timeout, session.write_timeout]).to eq([10, 10, 10])
   end
 
   it "a request with no timeout never inherits Net::HTTP's 60 second default" do
     client.get("https://zone.example/a")
     session = sessions.first
-    expect([session.open_timeout, session.read_timeout]).to eq([10, 10])
+    expect([session.open_timeout, session.read_timeout, session.write_timeout]).to eq([10, 10, 10])
   end
 
   it "close finishes sessions and the next request opens a fresh one" do
@@ -115,11 +124,127 @@ RSpec.describe Keycardai::OAuth::HTTP::NetHTTPClient do
     expect(dead_session).not_to be_started
   end
 
-  it "wraps transport failures into NetworkError with the unchanged message" do
-    client.get("https://zone.example/a")
-    sessions.first.fail_with = EOFError.new("end of file reached")
+  [
+    EOFError.new("end of file reached"),
+    IOError.new("closed stream"),
+    Errno::ECONNREFUSED.new,
+    Net::OpenTimeout.new,
+    Net::ReadTimeout.new,
+    OpenSSL::SSL::SSLError.new("certificate verify failed"),
+    Net::HTTPBadResponse.new("wrong status line"),
+    Net::HTTPHeaderSyntaxError.new("wrong header line format"),
+    Zlib::BufError.new("buffer error")
+  ].each do |error|
+    it "raises #{error.class} from the transport as a NetworkError that names the class" do
+      client.get("https://zone.example/a")
+      sessions.first.fail_with = error
 
-    expect { client.get("https://zone.example/a") }
-      .to raise_error(Keycardai::OAuth::NetworkError, "request to zone.example failed: EOFError")
+      expect { client.get("https://zone.example/a") }
+        .to raise_error(Keycardai::OAuth::NetworkError, "request to zone.example failed: #{error.class}")
+    end
+  end
+
+  it "turns off Net::HTTP's retry of a failed GET and its acceptance of a short body" do
+    client.get("https://zone.example/a")
+
+    expect(sessions.first).to have_attributes(max_retries: 0, ignore_eof: false)
+  end
+end
+
+# These tests use the real Net::HTTP, which decompresses a gzip body while it
+# reads it.
+RSpec.describe Keycardai::OAuth::HTTP::NetHTTPClient, "response bodies" do
+  let(:client) { described_class.new }
+
+  after { @server&.close }
+
+  def serve(*responses)
+    queue = responses.dup
+    @server = RawHTTPServer.new { queue.shift }
+  end
+
+  # The second request is a POST, which Net::HTTP does not retry, so it
+  # succeeds only if the client does not reuse a broken connection. The
+  # client reads the whole body before it decompresses it, so one connection
+  # serves both requests.
+  [
+    { name: "a 200 with a gzip body that does not decompress", response: RawHTTPServer.corrupt_gzip(200),
+      status: 200, body: "", body_error: Zlib::DataError },
+    { name: "a 503 with a gzip body that does not decompress", response: RawHTTPServer.corrupt_gzip(503),
+      status: 503, body: "", body_error: Zlib::DataError },
+    { name: "a 200 with a gzip body", response: RawHTTPServer.gzip_json(200, { "ok" => true }),
+      status: 200, body: '{"ok":true}', body_error: NilClass },
+    { name: "a 200 with a deflate body",
+      response: RawHTTPServer.response(200, Zlib::Deflate.deflate('{"ok":true}'), "Content-Encoding" => "deflate"),
+      status: 200, body: '{"ok":true}', body_error: NilClass }
+  ].each do |example|
+    it "returns #{example[:name]} with its status, and the next POST on the client succeeds" do
+      serve(example[:response], RawHTTPServer.json(200, { "next" => true }))
+
+      response = client.post_form(@server.url("/token"), { "grant_type" => "x" })
+      following = client.post_form(@server.url("/next"), { "grant_type" => "x" })
+
+      expect(response).to have_attributes(status: example[:status], body: example[:body])
+      expect(response.body_error).to be_an_instance_of(example[:body_error])
+      expect(following).to have_attributes(status: 200, body: '{"next":true}')
+      expect(@server.connections).to eq(1)
+    end
+  end
+
+  [
+    { name: "a GET", call: ->(client, url) { client.get(url) } },
+    { name: "a POST", call: ->(client, url) { client.post_form(url, { "grant_type" => "x" }) } }
+  ].each do |example|
+    it "sends #{example[:name]} once when the server closes the connection without answering" do
+      requests = Queue.new
+      @server = RawHTTPServer.new do |method, _path|
+        requests << method
+        :close
+      end
+
+      expect { example[:call].call(client, @server.url("/a")) }
+        .to raise_error(Keycardai::OAuth::NetworkError, /\Arequest to 127\.0\.0\.1 failed: /)
+      expect(requests.size).to eq(1)
+    end
+  end
+
+  # The server sends the response, then closes the connection. The cut rows
+  # stop the body halfway. A plain body without Content-Length or chunked
+  # encoding is not in the table: it ends when the connection closes, so a
+  # cut is not detectable. The stream rows send the whole body, which holds
+  # half a gzip stream.
+  [
+    { name: "a plain body with Content-Length", response: RawHTTPServer.cut(:json, :length), error: "EOFError" },
+    { name: "a gzip body with Content-Length", response: RawHTTPServer.cut(:gzip, :length), error: "EOFError" },
+    { name: "a chunked gzip body", response: RawHTTPServer.cut(:gzip, :chunked), error: "EOFError" },
+    { name: "a gzip body without Content-Length", response: RawHTTPServer.cut(:gzip, :none),
+      error: "Zlib::BufError" },
+    { name: "a gzip stream in a body with Content-Length", response: RawHTTPServer.cut_gzip_stream(:length),
+      error: "Zlib::BufError" },
+    { name: "a gzip stream in a chunked body", response: RawHTTPServer.cut_gzip_stream(:chunked),
+      error: "Zlib::BufError" }
+  ].each do |example|
+    it "raises NetworkError for #{example[:name]} that ends early" do
+      @server = RawHTTPServer.new { [example[:response], :close] }
+
+      expect { client.post_form(@server.url("/token"), { "grant_type" => "x" }, timeout: 2) }
+        .to raise_error(Keycardai::OAuth::NetworkError, "request to 127.0.0.1 failed: #{example[:error]}")
+    end
+  end
+
+  it "raises NetworkError for a response whose status line Net::HTTP cannot parse" do
+    @server = RawHTTPServer.new { "not an HTTP status line\r\n\r\n" }
+
+    expect { client.get(@server.url("/a")) }
+      .to raise_error(Keycardai::OAuth::NetworkError, "request to 127.0.0.1 failed: Net::HTTPBadResponse")
+  end
+
+  it "discovery reads a 200 that does not decompress as a malformed document" do
+    serve(RawHTTPServer.corrupt_gzip(200))
+
+    expect { Keycardai::OAuth.fetch_authorization_server_metadata(@server.url(""), http_client: client) }
+      .to raise_error(Keycardai::OAuth::ProtocolError, "metadata for #{@server.url("")} is not valid JSON") { |e|
+        expect(e.code).to eq("invalid_metadata")
+      }
   end
 end
