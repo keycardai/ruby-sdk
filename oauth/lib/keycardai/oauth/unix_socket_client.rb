@@ -17,10 +17,18 @@ module Keycardai
       # Unlike NetHTTPClient, a request without a timeout waits without bound:
       # the peer is a local process that may be waiting on a human.
       class UnixSocketClient
-        # Bytes of a response body read before the rest is dropped.
+        # Largest response body accepted; a longer one is refused, not truncated.
         MAX_BODY_BYTES = 1 << 20
         # Longest status or header line accepted.
         MAX_LINE_BYTES = 16 * 1024
+        # Header lines, and their total bytes, accepted before the response is
+        # refused. Without them a peer could grow the header table forever,
+        # since a request without a timeout never gives up on it.
+        MAX_HEADER_COUNT = 100
+        MAX_HEADER_BYTES = 64 * 1024
+        # An RFC 9110 field name. It excludes the leading whitespace of an
+        # obs-fold continuation and whitespace before the colon.
+        HEADER_NAME = /\A[!#$%&'*+\-.^_`|~0-9A-Za-z]+\z/
         # The same refusal Net::HTTP makes, for the same reason: a CR or LF
         # would let a header value end the header and start another.
         INVALID_HEADER = /[\r\n\0]/
@@ -35,7 +43,9 @@ module Keycardai
 
         # @param url [String]
         # @param headers [Hash{String => String}]
-        # @param timeout [Numeric, nil] seconds for the whole exchange; nil waits without bound
+        # @param timeout [Numeric, nil] seconds to wait for the response, from
+        #   before the dial; nil waits without bound. The dial and the write are
+        #   not themselves interrupted.
         # @return [Response]
         # @raise [NetworkError] when the socket cannot be dialled, the
         #   connection fails, or the timeout passes
@@ -103,7 +113,7 @@ module Keycardai
         end
 
         def read_response(reader)
-          status = reader.line[%r{\AHTTP/1\.[01] (\d{3})}, 1] ||
+          status = reader.line[%r{\AHTTP/1\.[01] (\d{3})(?: |\z)}, 1] ||
                    raise(NetworkError, "#{@socket_path} answered with a malformed status line")
           headers = read_headers(reader)
           Response.new(status: status.to_i, headers: headers,
@@ -112,53 +122,87 @@ module Keycardai
 
         def read_headers(reader)
           headers = Hash.new { |hash, name| hash[name] = [] }
-          until (line = reader.line).empty?
+          header_lines(reader).each do |line|
             name, value = line.split(":", 2)
-            raise NetworkError, "#{@socket_path} answered with a malformed header" if value.nil?
+            if value.nil? || !HEADER_NAME.match?(name)
+              raise NetworkError, "#{@socket_path} answered with a malformed header"
+            end
 
-            headers[name.strip.downcase] << value.strip
+            headers[name.downcase] << value.strip
           end
           headers.default_proc = nil
           headers
         end
 
+        def header_lines(reader)
+          lines = []
+          bytes = 0
+          until (line = reader.line).empty?
+            lines << line
+            bytes += line.bytesize
+            next if lines.size <= MAX_HEADER_COUNT && bytes <= MAX_HEADER_BYTES
+
+            raise NetworkError, "#{@socket_path} answered with more than #{MAX_HEADER_COUNT} headers " \
+                                "or #{MAX_HEADER_BYTES} bytes of them"
+          end
+          lines
+        end
+
         def read_body(reader, headers)
-          if headers.fetch("transfer-encoding", []).any? { |coding| coding.downcase.include?("chunked") }
+          if (coding = final_transfer_coding(headers))
+            raise ArgumentError, "unsupported transfer coding" unless coding == "chunked"
+
             read_chunked(reader)
           elsif (length = content_length(headers))
-            reader.bytes([length, MAX_BODY_BYTES].min)
+            raise body_too_large if length > MAX_BODY_BYTES
+
+            reader.bytes(length)
           else
-            reader.rest(MAX_BODY_BYTES)
+            reader.rest(MAX_BODY_BYTES + 1).tap { |body| raise body_too_large if body.bytesize > MAX_BODY_BYTES }
           end
         rescue ArgumentError
           raise NetworkError, "#{@socket_path} answered with malformed body framing"
         end
 
-        def content_length(headers)
-          value = headers["content-length"]&.first
-          return nil if value.nil?
-
-          length = Integer(value, 10)
-          raise ArgumentError, "negative Content-Length" if length.negative?
-
-          length
+        def body_too_large
+          NetworkError.new("#{@socket_path} answered with a body over #{MAX_BODY_BYTES} bytes")
         end
 
-        # Stops at the size cap, or at the last chunk without reading trailers:
-        # the connection is closed after the response, so nothing after the
-        # body needs to be consumed.
+        # RFC 9112 requires chunked to be the final coding whenever one is sent;
+        # this client decodes nothing else.
+        def final_transfer_coding(headers)
+          headers.fetch("transfer-encoding", []).flat_map { |value| value.split(",") }.last&.strip&.downcase
+        end
+
+        # Repeated or listed values must agree (RFC 9112 §6.3), and Integer()
+        # alone would also accept a sign or underscores.
+        def content_length(headers)
+          values = headers.fetch("content-length", []).flat_map { |value| value.split(",") }.map(&:strip)
+          return nil if values.empty?
+          raise ArgumentError, "malformed Content-Length" unless values.uniq.size == 1 && values.first.match?(/\A\d+\z/)
+
+          Integer(values.first, 10)
+        end
+
+        # Stops at the last chunk without reading trailers: the connection is
+        # closed after the response, so nothing after the body needs consuming.
         def read_chunked(reader)
           body = String.new(encoding: Encoding::BINARY)
           loop do
-            size = Integer(reader.line.split(";", 2).first.strip, 16)
-            raise ArgumentError, "negative chunk size" if size.negative?
+            size = chunk_size(reader.line)
+            return body if size.zero?
+            raise body_too_large if body.bytesize + size > MAX_BODY_BYTES
 
-            take = [size, MAX_BODY_BYTES - body.bytesize].min
-            body << reader.bytes(take)
-            return body if take < size || size.zero?
-
-            reader.line
+            body << reader.bytes(size)
+            raise ArgumentError, "chunk data not followed by CRLF" unless reader.line.empty?
           end
+        end
+
+        def chunk_size(line)
+          digits = line.split(";", 2).first.strip
+          raise ArgumentError, "malformed chunk size" unless digits.match?(/\A\h+\z/)
+
+          Integer(digits, 16)
         end
 
         # Buffered reads from the socket, bounded by an optional monotonic
@@ -178,6 +222,8 @@ module Keycardai
               raise NetworkError, "response line exceeds #{MAX_LINE_BYTES} bytes" if @buffer.bytesize > MAX_LINE_BYTES
               raise EOFError, "connection closed before the response completed" unless fill
             end
+            raise NetworkError, "response line exceeds #{MAX_LINE_BYTES} bytes" if index > MAX_LINE_BYTES
+
             @buffer.slice!(0, index + 2).byteslice(0, index)
           end
 
