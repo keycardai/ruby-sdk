@@ -27,7 +27,7 @@ is acceptable only if it is sanctioned here; anything else is a contract bug.
    (`verify_token_for_zone`), the TS/Python shape, not Go's three constructors.
 3. **Environment variables**: no implicit reads of Keycard configuration,
    matching TS/Go and the spec family (base.md, restated by the rewritten
-   client-secret / web-identity / workload-identity specs). The single blessed
+   client-secret / web-identity / workload-identity specs). The first sanctioned
    exception is `FileTokenSource` path discovery via the platform-convention
    vars (`KEYCARD_EKS_WORKLOAD_IDENTITY_TOKEN_FILE`,
    `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`, `AWS_WEB_IDENTITY_TOKEN_FILE`,
