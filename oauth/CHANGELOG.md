@@ -15,6 +15,201 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.7.0-keycardai-oauth (2026-11-19)
+
+
+- feat(keycardai-oauth): poll until done for the device grant (#57)
+- * feat(keycardai-oauth): poll until done for the device grant
+- DeviceAuthorizationClient#wait_for_token polls until the person approves
+or denies the request, following RFC 8628 section 3.5. It waits the
+interval before each poll, including the first. On authorization_pending
+it polls again, and on slow_down it adds 5 seconds to the interval for
+this poll and every later one.
+- A network error, a request timeout, a 5xx, or a 429 stops the loop with
+DevicePollError. Its interval is the wait the loop would have used next,
+doubled after a network error or a timeout. Its cause is the original
+failure, including the OAuthError from a 5xx or 429 with an OAuth error
+body. To resume, call wait_for_token again with interval: error.interval.
+Any other failure is raised as is. The credential's client
+authentication is called outside every rescue, so its error is raised
+as is whatever its class. When the next poll would start after
+expires_at, the loop raises OAuthError expired_token without waiting or
+sending that poll.
+- Cancellation is a cancelled: callable, called at least every 0.5 seconds
+of a wait, or a deadline: Time. The loop checks both before discovery,
+during each wait, and right before each poll. Either one raises
+CancelledError, and the loop does not call the credential or send
+another request. A request in flight is not interrupted. The request
+timeout bounds each poll whatever the deadline.
+- The client takes clock: and sleep: callables, so tests run the loop
+without real delays. A wait counts the seconds passed to sleep, so it
+ends even if the clock does not advance. The token endpoint is resolved
+once, before the first wait and the first expiry check.
+- examples/device-authorization runs the flow against a zone, resumes
+after a DevicePollError, and refreshes the token for one resource.
+bin/selftest runs it against a stub zone.
+- Spec: device-authorization.md spec-version 4, unit rows 8 to 19, 21, 26
+to 29, and 31 to 33. Row 20 does not apply to Ruby (Divergences,
+"Cancellation in Ruby"). The example labelled "20 (Ruby)" checks the
+Ruby behavior instead.
+- Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+- * fix(keycardai-oauth): no poll after a cancel or expiry during the credential call or a late wait
+- wait_for_token checks for cancellation and expires_at again after the
+credential's client authentication returns, right before the poll. It
+checks expires_at again after each wait, so a wait that ends late does
+not send a poll after the device code expired.
+- Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+- * test(keycardai-oauth): slow_down increases add up across polls
+- Row 9 gets two cases with two slow_down responses, one in a row and one
+with authorization_pending between them. Each expects the interval to
+rise by 5 each time (RFC 8628 Section 3.5). A loop that resets the
+interval to authorization.interval + 5 fails both.
+- Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+- ---------
+- Co-authored-by: Claude Opus 5.5 <noreply@anthropic.com>
+- feat(keycardai-oauth): device authorization request and single poll (#55)
+- * feat(keycardai-oauth): device authorization request and single poll
+- Adds the device side of the RFC 8628 device authorization grant. The
+poll loop follows in the next change.
+- DeviceAuthorizationClient takes exactly one of credential: and
+client_id:. request_device_authorization(scopes:, resources:) returns a
+DeviceAuthorization, a Data value whose expires_at comes from the
+injected clock. poll_token(authorization) polls the token endpoint once
+and raises the server's OAuthError, including authorization_pending and
+slow_down.
+- Each operation checks the endpoint it sends to. A missing endpoint, or
+one that is not an http or https URL, is a ConfigurationError before any
+request. Discovered metadata is cached for discovery_ttl when both
+endpoints are http or https URLs. Otherwise it is not cached, and the
+next call fetches it again. A discovery failure is raised as is.
+- A device authorization response that lacks a required field, has an
+interval that is not a positive integer, or has a body that does not
+decompress is a ProtocolError with code invalid_response.
+- AuthorizationServerMetadata has a device_authorization_endpoint member.
+Every member but issuer now defaults to nil, so metadata built by hand
+with keywords keeps working. GrantType::DEVICE_CODE is the grant type.
+- Spec: device-authorization.md spec-version 4, unit rows 1 to 7, 22 to 25,
+29 (poll once), 30, and 31 and 32 (poll once and the device authorization
+request). authorization-server-discovery.md rows 9 and 10.
+- Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+- * fix(keycardai-oauth): read an empty verification_uri_complete as absent
+- Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+- * fix(keycardai-oauth): DeviceAuthorization#inspect leaves out device_code
+- A public client redeems device_code with its client_id alone (RFC 8628
+Section 3.4), so logging the value leaked a working credential. Data's
+inspect, to_s, and pretty_print now show every member except
+device_code. to_h still includes it, so a stored authorization can poll.
+Python's DeviceAuthorization leaves device_code out of repr the same
+way.
+- Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+- ---------
+- Co-authored-by: Claude Opus 5.5 <noreply@anthropic.com>
+- feat(keycardai-oauth): refresh_authorization accepts a credential (#54)
+- refresh_authorization takes credential: in place of client_id and
+client_secret. The credential's client_authentication is called with the
+token endpoint, and its headers and form fields go on the request. The
+SDK does not add client_id; the credential's form fields include it when
+the credential has one.
+- client_id: is now optional, since a credential replaces it. These are
+ConfigurationErrors, raised before discovery or any request:
+- - a credential together with client_id or client_secret
+- a credential that does not respond to client_authentication
+- neither a credential nor a non-empty client_id, including a
+  client_secret without a client_id
+- A call without client_id: used to raise ArgumentError for the missing
+keyword. It now raises ConfigurationError. An empty client_id used to be
+sent; it is now a ConfigurationError.
+- Spec: authorization-code-pkce.md spec-version 5, unit rows 15 and 16.
+- Co-authored-by: Claude Opus 5.5 <noreply@anthropic.com>
+- feat(keycardai-oauth): client authentication on credentials (#53)
+- * feat(keycardai-oauth): client authentication on credentials
+- ClientSecret, WebIdentity, and WorkloadIdentity respond to
+client_authentication(issuer:, endpoint:). It returns a
+ClientAuthentication with the headers and form fields that authenticate
+one request, and never a grant parameter.
+- - ClientSecret returns the HTTP Basic header for the zone named by
+  issuer. A multi-zone credential raises ConfigurationError for a zone it
+  has no credentials for.
+- WebIdentity signs a new client_assertion with aud set to endpoint.
+- WorkloadIdentity returns the source's token as client_assertion, and
+  client_id when configured.
+- prepare_token_exchange_request uses the same form fields, and its params
+are unchanged. The method is optional, so a credential defined outside
+the gem keeps working without it.
+- Spec: base.md spec-version 5 (credential operations), client-secret.md
+row 7, web-identity.md rows 7 and 8, workload-identity.md rows 4b and 4c.
+WebIdentity requires client_id at construction, so row 8 fails there.
+Row 9 does not apply: WebIdentity has no audience_config.
+- Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+- * fix(keycardai-oauth): ClientAuthentication and ClientSecret inspect leave out secrets
+- headers and params hold a Basic header or a client assertion. Data's
+inspect, to_s, and pretty_print showed both, so logging the object or
+printing it in a console showed the client secret. All three now show
+the header and form field names only. Python's ClientAuthentication
+leaves both fields out of repr the same way.
+- ClientSecret's inspect, to_s, and pretty_print show the client ID, or
+the issuers of a multi-zone credential. An object that holds a
+ClientSecret, such as a DeviceAuthorizationClient, showed the secret
+through it.
+- Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+- ---------
+- Co-authored-by: Claude Opus 5.5 <noreply@anthropic.com>
+- fix(keycardai-oauth): a response body that does not decompress is a malformed response (#52)
+- * fix(keycardai-oauth): a response body that does not decompress is a malformed response
+- Net::HTTP decompresses a gzip or deflate body while it reads it. A body
+that does not decompress raised Zlib::DataError, which NetHTTPClient did
+not rescue, so a raw Zlib error left every operation in the gem.
+- NetHTTPClient now returns the response with its status, an empty body,
+and the Zlib error as body_error. Net::HTTP closes the connection, and
+the next request opens a new one.
+- On the token endpoint, a 2xx is a ProtocolError with code
+invalid_response and the Zlib error as its cause. Any other status is an
+HTTPError for that status, without an OAuth error body. Other operations
+read the empty body as a malformed document and raise their own typed
+error.
+- Spec: device-authorization.md spec-version 4, poll once. Unit rows 31
+and 32 are tested with the device grant later in this stack.
+- Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+- * fix(keycardai-oauth): bound and type every NetHTTPClient failure
+- Every exception Net::HTTP raises for a failed connection or response
+becomes a NetworkError, including a status line or header it cannot
+parse and an IOError. The client sets max_retries to 0, so a failed GET
+is sent once, and applies the timeout to writes as well as to opening
+the connection and reading.
+- Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+- * fix(keycardai-oauth): a token response scope that is not a string is invalid_response
+- TokenResponse.from_wire raises ProtocolError with code invalid_response
+when scope is present and is not a string.
+- Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+- * fix(keycardai-oauth): a response body that ends early is a NetworkError
+- keycard-sdk-spec #109 makes a body that ends early a network error,
+compressed or not. Net::HTTP returned a body shorter than its
+Content-Length without an error, because ignore_eof defaults to true.
+NetHTTPClient now sets it to false.
+- NetHTTPClient also decompresses gzip and deflate bodies itself. Net::HTTP
+drops the Zlib::BufError for a gzip stream that ends early inside a body
+that arrived whole, and returns an empty body. A gzip stream that ends
+early is now a NetworkError, with or without Content-Length. A gzip body
+that arrived whole and is not gzip still gives a body_error with
+Zlib::DataError, and the connection stays open for the next request.
+- Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+- ---------
+- Co-authored-by: Claude Opus 5.5 <noreply@anthropic.com>
+- fix(keycardai-oauth): percent-encode the client ID and secret in HTTP Basic (#56)
+- RFC 6749 section 2.3.1 requires the client ID and secret to be encoded
+before they go into the HTTP Basic credential. HTTP.basic_authorization
+sent them as is, so a client ID with a colon split in the wrong place on
+the server, and a secret with "%" decoded to a different value.
+- Each value is now percent-encoded. ASCII letters, digits, and "-._~" stay
+as they are, and a space becomes %20. Keycard zones decode each half with
+decodeURIComponent (svc-sts packages/w3/src/auth/basic.js), and a form
+decoder reads the same value back.
+- Every Basic header goes through HTTP.basic_authorization: ClientSecret,
+TokenExchangeClient, ClientCredentialsClient, exchange_authorization_code,
+and refresh_authorization.
+- Spec: client-secret.md spec-version 3, unit row 8.
+- Co-authored-by: Claude Opus 5.5 <noreply@anthropic.com>
+
 ## 0.6.1-keycardai-oauth (2026-11-06)
 
 
