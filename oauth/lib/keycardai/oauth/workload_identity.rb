@@ -50,11 +50,25 @@ module Keycardai
           "subject_token_type" => TokenType::ACCESS_TOKEN,
           "resource" => resource,
           "audience" => audience,
-          "scope" => scope,
+          "scope" => scope
+        }.compact.merge(client_authentication(issuer: issuer, endpoint: token_endpoint).params)
+      end
+
+      # Client authentication for one request, as form fields: the source's
+      # token as client_assertion, its type, and client_id when configured.
+      # The source is called on every request.
+      #
+      # @param issuer [String, nil] unused; part of the Credential interface
+      # @param endpoint [String, nil] unused; the platform fixes the token's
+      #   audience
+      # @return [ClientAuthentication]
+      # @raise [WorkloadIdentityRuntimeError] the source failed to produce a token
+      def client_authentication(issuer:, endpoint:)
+        ClientAuthentication.new(params: {
           "client_id" => @client_id,
           "client_assertion" => fetch_identity_token,
           "client_assertion_type" => PrivateKeyManager::ASSERTION_TYPE
-        }.compact
+        }.compact)
       end
 
       private
