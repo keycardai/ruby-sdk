@@ -3,6 +3,7 @@
 require_relative "oauth/version"
 require_relative "oauth/errors"
 require_relative "oauth/http"
+require_relative "oauth/unix_socket_client"
 require_relative "oauth/discovery"
 require_relative "oauth/userinfo"
 require_relative "oauth/token_types"
@@ -18,6 +19,9 @@ require_relative "oauth/private_key"
 require_relative "oauth/web_identity"
 require_relative "oauth/workload_identity"
 require_relative "oauth/token_sources"
+require_relative "oauth/agent_socket"
+require_relative "oauth/agent_token_source"
+require_relative "oauth/resource_transport"
 require_relative "oauth/access_context"
 require_relative "oauth/exchange_tokens"
 require_relative "oauth/token_verifier"
@@ -34,7 +38,8 @@ module Keycardai
   # client credentials, authorization code + PKCE, the device authorization
   # grant (RFC 8628), dynamic client registration (RFC 7591), authorization
   # server discovery (RFC 8414), UserInfo (OIDC Core 1.0 §5.3), JWT/JWKS
-  # verification, application credentials, and AccessContext.
+  # verification, application credentials, AccessContext, and resource tokens
+  # from the local Keycard agent.
   module OAuth
   end
 end

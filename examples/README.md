@@ -19,3 +19,7 @@ sources.
   user's identity survives the hop. `bin/selftest` proves the full
   discover/exchange/invoke chain hermetically, including audience binding;
   `bin/live` runs the same agents against a real zone.
+- [`local-agent-token-source/`](local-agent-token-source/): a script that calls
+  a third-party API with a token from the local Keycard agent and no
+  application credential, under `keycard run` or against the `keycard agent`
+  daemon. Run by hand; its header comment lists the Keycard setup.
