@@ -105,6 +105,23 @@ RSpec.describe Keycardai::OAuth::WorkloadIdentity do
     end
   end
 
+  [nil, ""].each do |client_id|
+    it "4d: check_client_authentication with client_id #{client_id.inspect} is a configuration error" do
+      credential = described_class.new(source: -> { raise "source called" }, client_id: client_id)
+
+      expect { credential.check_client_authentication }
+        .to raise_error(Keycardai::OAuth::ConfigurationError,
+                        "WorkloadIdentity: client_id is required for interactive grants " \
+                        "(the public ID of a v2 token credential)")
+    end
+  end
+
+  it "4d: check_client_authentication passes with a client_id" do
+    credential = described_class.new(source: -> { raise "source called" }, client_id: "acr_123")
+
+    expect { credential.check_client_authentication }.not_to raise_error
+  end
+
   describe Keycardai::OAuth::FileTokenSource do
     it "5: uses an explicit token_file_path and validates it at construction" do
       Dir.mktmpdir do |dir|

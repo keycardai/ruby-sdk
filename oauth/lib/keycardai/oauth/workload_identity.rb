@@ -15,7 +15,8 @@ module Keycardai
       #   OIDC token; a bare callable is accepted
       # @param client_id [String, nil] the Keycard application credential this
       #   workload authenticates as; sent as the client_id form parameter when
-      #   set (token-federation credentials are resolved by it)
+      #   set (token-federation credentials are resolved by it). The
+      #   interactive grants (refresh, device authorization) require it.
       # @raise [ConfigurationError] when the source is missing or has neither
       #   an identity_token method nor call
       def initialize(source:, client_id: nil)
@@ -69,6 +70,20 @@ module Keycardai
           "client_assertion" => fetch_identity_token,
           "client_assertion_type" => PrivateKeyManager::ASSERTION_TYPE
         }.compact)
+      end
+
+      # Raise unless client_id is set. The interactive grants (refresh,
+      # device authorization) need a v2 token credential, which the zone
+      # resolves by client_id, so they call this before any request.
+      #
+      # @return [void]
+      # @raise [ConfigurationError] client_id is nil or empty
+      def check_client_authentication
+        return unless @client_id.nil? || @client_id.empty?
+
+        raise ConfigurationError,
+              "WorkloadIdentity: client_id is required for interactive grants " \
+              "(the public ID of a v2 token credential)"
       end
 
       private
