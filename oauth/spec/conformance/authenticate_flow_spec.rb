@@ -222,5 +222,57 @@ RSpec.describe "Authenticate loopback flow" do
 
       expect(response.access_token).to eq("at_user")
     end
+
+    describe "with a multi-zone ClientSecret credential" do
+      def multi_zone(*issuers)
+        Keycardai::OAuth::ClientSecret.new(issuers.each_with_index.to_h { |iss, n| [iss, ["id-#{n}", "secret-#{n}"]] })
+      end
+
+      # authenticate takes no credential yet, so the pass case stops at the
+      # call into it: the pin check let the resolved issuer through.
+      it "proceeds when the resolved issuer is one of its zones" do
+        credential = multi_zone("https://other.example.com", "#{zone.issuer}/")
+        http = challenge_http(zone.issuer)
+        received = nil
+        without_partial_double_verification do
+          allow(Keycardai::OAuth).to receive(:authenticate) { |**kw| (received = kw) && :token }
+
+          expect(from_challenge(http, redirecting_browser, credential: credential)).to eq(:token)
+        end
+
+        expect(received).to include(issuer: zone.issuer, credential: credential)
+        expect(http.requests).to eq([prm_url])
+      end
+
+      it "raises before any request to an issuer outside its zones" do
+        credential = multi_zone("https://other.example.com", "https://third.example.com")
+        http = challenge_http(zone.issuer)
+        browser = ->(_url) { raise "browser should not open" }
+
+        expect { from_challenge(http, browser, credential: credential) }
+          .to raise_error(Keycardai::OAuth::ConfigurationError, /#{Regexp.escape(zone.issuer)}.*zone issuers/)
+        expect(http.requests).to eq([prm_url])
+      end
+
+      it "uses an explicit allowed_issuers over its zones" do
+        http = challenge_http(zone.issuer)
+        browser = ->(_url) { raise "browser should not open" }
+
+        expect do
+          from_challenge(http, browser, credential: multi_zone(zone.issuer),
+                                        allowed_issuers: ["https://trusted.example.com"])
+        end.to raise_error(Keycardai::OAuth::ConfigurationError, /not in allowed_issuers/)
+        expect(http.requests).to eq([prm_url])
+      end
+
+      it "still requires allowed_issuers for a single-zone ClientSecret" do
+        http = challenge_http(zone.issuer)
+        browser = ->(_url) { raise "browser should not open" }
+
+        expect { from_challenge(http, browser, credential: Keycardai::OAuth::ClientSecret.new("cid", "shh")) }
+          .to raise_error(Keycardai::OAuth::ConfigurationError, /allowed_issuers/)
+        expect(http.requests).to be_empty
+      end
+    end
   end
 end
