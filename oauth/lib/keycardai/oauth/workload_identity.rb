@@ -71,6 +71,20 @@ module Keycardai
         }.compact)
       end
 
+      # Raise unless client_id is set. The interactive grants (refresh,
+      # device authorization) need a v2 token credential, which the zone
+      # resolves by client_id, so they call this before any request.
+      #
+      # @return [void]
+      # @raise [ConfigurationError] client_id is nil or empty
+      def check_client_authentication
+        return unless @client_id.nil? || @client_id.empty?
+
+        raise ConfigurationError,
+              "WorkloadIdentity: client_id is required for interactive grants " \
+              "(the public ID of a v2 token credential)"
+      end
+
       private
 
       def normalize_source(source)

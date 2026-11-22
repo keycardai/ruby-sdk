@@ -41,16 +41,21 @@ module Keycardai
       # Raise ConfigurationError when credential is set with client_id or
       # client_secret, when credential does not respond to
       # client_authentication, or when neither credential nor a non-empty
-      # client_id is set. Call it before any request.
+      # client_id is set. A credential that responds to
+      # check_client_authentication is checked with it, so a WorkloadIdentity
+      # without client_id raises here. Call it before any request.
       #
       # @raise [ConfigurationError]
       def validate(credential:, client_id:, client_secret: nil)
         if credential
           given = { "client_id" => client_id, "client_secret" => client_secret }.compact.keys
           raise ConfigurationError, "pass a credential or #{given.join(" and ")}, not both" unless given.empty?
-          return if credential.respond_to?(:client_authentication)
+          unless credential.respond_to?(:client_authentication)
+            raise ConfigurationError, "#{credential.class} does not provide client authentication"
+          end
 
-          raise ConfigurationError, "#{credential.class} does not provide client authentication"
+          credential.check_client_authentication if credential.respond_to?(:check_client_authentication)
+          return
         end
         return unless client_id.nil? || client_id.empty?
 

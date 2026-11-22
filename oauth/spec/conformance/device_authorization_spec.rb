@@ -221,6 +221,12 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
       { row: "23", name: "a credential without client_authentication",
         options: ->(_cred) { { client_id: nil, credential: Object.new } },
         message: "Object does not provide client authentication" },
+      { row: "23", name: "a WorkloadIdentity credential without client_id",
+        options: lambda { |_cred|
+          { client_id: nil, credential: Keycardai::OAuth::WorkloadIdentity.new(source: -> { raise "source called" }) }
+        },
+        message: "WorkloadIdentity: client_id is required for interactive grants " \
+                 "(the public ID of a v2 token credential)" },
       { row: "-", name: "a clock that does not respond to call", options: ->(_cred) { { clock: nil } },
         message: "clock must respond to call" },
       { row: "-", name: "a timeout of 0", options: ->(_cred) { { timeout: 0 } },
@@ -642,7 +648,9 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
         error: poll_error, message: "device token poll failed: token endpoint returned access_denied",
         next_interval: 5, cause: Keycardai::OAuth::OAuthError, cause_status: 503, cause_code: "access_denied" },
       { row: "27", name: "the credential's client authentication fails on a poll",
-        credential: -> { Keycardai::OAuth::WorkloadIdentity.new(source: -> { raise IOError, "token file gone" }) },
+        credential: lambda {
+          Keycardai::OAuth::WorkloadIdentity.new(source: -> { raise IOError, "token file gone" }, client_id: "acr_123")
+        },
         polls: -> { [] },
         events: [[:wait, 5]],
         error: Keycardai::OAuth::WorkloadIdentityRuntimeError,
