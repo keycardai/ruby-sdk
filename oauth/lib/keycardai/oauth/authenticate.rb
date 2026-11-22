@@ -102,16 +102,39 @@ module Keycardai
     # Challenge-driven entry to the login flow: resolve the issuer from a
     # WWW-Authenticate challenge, then run authenticate against it.
     #
+    # The protected resource names the issuer, so client authentication
+    # (client_secret, or credential once authenticate takes one) requires
+    # allowed_issuers. The resolved issuer must equal one of them, compared
+    # without a trailing slash. A public client may omit the list; when it
+    # sets one, it is enforced the same way.
+    #
     # @param www_authenticate [String] the WWW-Authenticate header value
+    # @param allowed_issuers [Array<String>, nil] the issuers the caller trusts
     # @param options [Hash] forwarded to authenticate
     # @return [TokenResponse]
-    def self.authenticate_from_challenge(www_authenticate, http_client: HTTP::NetHTTPClient.new, **options)
+    # @raise [ConfigurationError] client authentication without
+    #   allowed_issuers, before any request; or a resolved issuer outside
+    #   allowed_issuers, after the resource metadata fetch and before any
+    #   request to that issuer
+    def self.authenticate_from_challenge(www_authenticate, http_client: HTTP::NetHTTPClient.new,
+                                         allowed_issuers: nil, **options)
       # Credential errors surface before the resource metadata fetch.
       if options[:credential]
         ClientAuth.validate(credential: options[:credential], client_id: nil, client_secret: options[:client_secret])
       end
+      allowed = Array(allowed_issuers)
+      client_auth = !options[:client_secret].to_s.empty? || !options[:credential].nil?
+      if client_auth && allowed.empty?
+        raise ConfigurationError,
+              "pass allowed_issuers to send client_secret or credential to an issuer resolved from a challenge"
+      end
+
       issuer = resolve_issuer_from_challenge(www_authenticate, http_client: http_client,
                                                                timeout: options[:timeout])
+      unless allowed.empty? || allowed.any? { |a| a.chomp("/") == issuer.chomp("/") }
+        raise ConfigurationError, "the challenge resolved issuer #{issuer}, which is not in allowed_issuers"
+      end
+
       authenticate(issuer: issuer, http_client: http_client, **options)
     end
 
