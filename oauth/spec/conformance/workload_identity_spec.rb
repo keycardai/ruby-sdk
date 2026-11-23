@@ -105,6 +105,42 @@ RSpec.describe Keycardai::OAuth::WorkloadIdentity do
     end
   end
 
+  [nil, ""].each do |client_id|
+    it "4d: check_client_authentication with client_id #{client_id.inspect} is a configuration error" do
+      credential = described_class.new(source: -> { raise "source called" }, client_id: client_id)
+
+      expect { credential.check_client_authentication }
+        .to raise_error(Keycardai::OAuth::ConfigurationError,
+                        "WorkloadIdentity: client_id is required for interactive grants " \
+                        "(the public ID of a v2 token credential)")
+    end
+  end
+
+  it "4d: check_client_authentication passes with a client_id" do
+    credential = described_class.new(source: -> { raise "source called" }, client_id: "acr_123")
+
+    expect { credential.check_client_authentication }.not_to raise_error
+  end
+
+  it "4e: token exchange without client_id is not checked and sends the assertion only" do
+    zone = ZoneFixture.new
+    http = FakeHTTPClient.new do |url, _params|
+      if url == zone.metadata_url
+        json_response(zone.metadata)
+      else
+        json_response({ "access_token" => "at_new", "token_type" => "Bearer" })
+      end
+    end
+    credential = described_class.new(source: rotating_source_class.new("platform-token"))
+
+    Keycardai::OAuth::TokenExchangeClient.new(issuer: zone.issuer, credential: credential, http_client: http)
+                                         .exchange_token(subject_token: "at_subject")
+
+    params = http.calls.find { |call| call.url == zone.token_url }.params
+    expect(params).to include("client_assertion" => "platform-token")
+    expect(params).not_to have_key("client_id")
+  end
+
   describe Keycardai::OAuth::FileTokenSource do
     it "5: uses an explicit token_file_path and validates it at construction" do
       Dir.mktmpdir do |dir|

@@ -103,6 +103,38 @@ RSpec.describe "Authenticate loopback flow" do
       .to raise_error(Keycardai::OAuth::InteractionTimeoutError)
   end
 
+  describe "34: a WorkloadIdentity credential without client_id" do
+    let(:credential) { Keycardai::OAuth::WorkloadIdentity.new(source: -> { raise "source called" }) }
+    let(:message) do
+      "WorkloadIdentity: client_id is required for interactive grants (the public ID of a v2 token credential)"
+    end
+
+    it "authenticate raises a configuration error before discovery or opening the browser" do
+      http = token_http
+      opened = false
+
+      expect do
+        Keycardai::OAuth.authenticate(issuer: zone.issuer, client_id: "cid", credential: credential, port: 0,
+                                      callback_timeout: 1, http_client: http,
+                                      browser_opener: ->(_url) { opened = true })
+      end.to raise_error(Keycardai::OAuth::ConfigurationError, message)
+      expect(http.calls).to be_empty
+      expect(opened).to be(false)
+    end
+
+    it "authenticate_from_challenge raises a configuration error before the resource metadata fetch" do
+      http = token_http
+      header = 'Bearer resource_metadata="https://tool.example.com/.well-known/oauth-protected-resource"'
+
+      expect do
+        Keycardai::OAuth.authenticate_from_challenge(header, client_id: "cid", credential: credential, port: 0,
+                                                             callback_timeout: 1, http_client: http,
+                                                             browser_opener: ->(_url) {})
+      end.to raise_error(Keycardai::OAuth::ConfigurationError, message)
+      expect(http.calls).to be_empty
+    end
+  end
+
   describe "resolve_issuer_from_challenge" do
     it "fetches the challenge's resource metadata and returns its first authorization server" do
       http = FakeHTTPClient.new do |url, _params|

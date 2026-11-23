@@ -209,7 +209,7 @@ RSpec.describe "Authorization code with PKCE" do
   end
 
   it "21: a failing client authentication raises the credential's error and sends no token request" do
-    credential = Keycardai::OAuth::WorkloadIdentity.new(source: -> { raise IOError, "no token" })
+    credential = Keycardai::OAuth::WorkloadIdentity.new(source: -> { raise IOError, "no token" }, client_id: "acr_123")
     http = token_http
 
     expect { exchange(http, credential: credential) }
@@ -283,8 +283,11 @@ RSpec.describe "Authorization code with PKCE" do
       headers: { "Accept" => "application/json", "X-Client-Auth" => "header" },
       calls: [["https://acme.test", "https://acme.test/oauth/token"]] },
     { row: "16", name: "a WorkloadIdentity credential",
-      options: -> { { credential: Keycardai::OAuth::WorkloadIdentity.new(source: -> { "platform-token" }) } },
-      params: base_params + [%w[client_assertion platform-token], ["client_assertion_type", jwt_bearer]],
+      options: lambda {
+        { credential: Keycardai::OAuth::WorkloadIdentity.new(source: -> { "platform-token" }, client_id: "acr_123") }
+      },
+      params: base_params + [%w[client_id acr_123], %w[client_assertion platform-token],
+                             ["client_assertion_type", jwt_bearer]],
       headers: { "Accept" => "application/json" } },
     { row: "16", name: "a ClientSecret credential",
       options: -> { { credential: Keycardai::OAuth::ClientSecret.new("cid", "csecret") } },
@@ -333,6 +336,10 @@ RSpec.describe "Authorization code with PKCE" do
     { name: "a credential without client authentication",
       options: { credential: Object.new },
       message: "Object does not provide client authentication" },
+    { name: "a WorkloadIdentity credential without client_id",
+      options: { credential: Keycardai::OAuth::WorkloadIdentity.new(source: -> { raise "source called" }) },
+      message: "WorkloadIdentity: client_id is required for interactive grants " \
+               "(the public ID of a v2 token credential)" },
     { name: "neither credential nor client_id",
       options: {},
       message: "pass a credential or a client_id" },

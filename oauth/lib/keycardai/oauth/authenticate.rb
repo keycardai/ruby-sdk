@@ -37,8 +37,8 @@ module Keycardai
     # @raise [InteractionTimeoutError] the user did not complete the redirect
     # @raise [OAuthError] the authorization server denied the request
     # @raise [ProtocolError] the redirect's state did not match (code state_mismatch)
-    # @raise [ConfigurationError] credential combined with client_secret, or
-    #   without client_authentication
+    # @raise [ConfigurationError] credential combined with client_secret,
+    #   without client_authentication, or a WorkloadIdentity without client_id
     def self.authenticate(issuer:, client_id:, scope: nil, resources: [], port: DEFAULT_CALLBACK_PORT,
                           callback_timeout: DEFAULT_CALLBACK_TIMEOUT, client_secret: nil, credential: nil,
                           verifier_length: PKCE::DEFAULT_VERIFIER_LENGTH,
@@ -106,6 +106,10 @@ module Keycardai
     # @param options [Hash] forwarded to authenticate
     # @return [TokenResponse]
     def self.authenticate_from_challenge(www_authenticate, http_client: HTTP::NetHTTPClient.new, **options)
+      # Credential errors surface before the resource metadata fetch.
+      if options[:credential]
+        ClientAuth.validate(credential: options[:credential], client_id: nil, client_secret: options[:client_secret])
+      end
       issuer = resolve_issuer_from_challenge(www_authenticate, http_client: http_client,
                                                                timeout: options[:timeout])
       authenticate(issuer: issuer, http_client: http_client, **options)
