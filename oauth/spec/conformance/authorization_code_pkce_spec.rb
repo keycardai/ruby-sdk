@@ -209,7 +209,7 @@ RSpec.describe "Authorization code with PKCE" do
   end
 
   it "21: a failing client authentication raises the credential's error and sends no token request" do
-    credential = Keycardai::OAuth::WorkloadIdentity.new(source: -> { raise IOError, "no token" })
+    credential = Keycardai::OAuth::WorkloadIdentity.new(source: -> { raise IOError, "no token" }, client_id: "acr_123")
     http = token_http
 
     expect { exchange(http, credential: credential) }

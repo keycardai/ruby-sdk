@@ -106,6 +106,10 @@ module Keycardai
     # @param options [Hash] forwarded to authenticate
     # @return [TokenResponse]
     def self.authenticate_from_challenge(www_authenticate, http_client: HTTP::NetHTTPClient.new, **options)
+      # Credential errors surface before the resource metadata fetch.
+      if options[:credential]
+        ClientAuth.validate(credential: options[:credential], client_id: nil, client_secret: options[:client_secret])
+      end
       issuer = resolve_issuer_from_challenge(www_authenticate, http_client: http_client,
                                                                timeout: options[:timeout])
       authenticate(issuer: issuer, http_client: http_client, **options)
