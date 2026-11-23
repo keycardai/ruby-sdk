@@ -3,13 +3,14 @@
 require "tmpdir"
 
 # Conformance suite for keycard-sdk-spec
-# specs/oauth-client/authorization-code-pkce.md at spec-version 3. Each example
+# specs/oauth-client/authorization-code-pkce.md at spec-version 6. Each example
 # maps to a row of the spec's Unit Tests table. The high-level authenticate
-# loopback flow is covered by the spec's integration table only. Rows 8 to 11
-# belong to the two-call web-app flow, which this gem does not ship; rows 12 to
-# 14 are pinned on the building blocks that flow composes. Row 15 is the
-# refresh step, hosted as refresh_authorization. Row 16 is refresh with a
-# credential (spec-version 5).
+# loopback flow is covered by the spec's integration table only. Rows 8 to 11,
+# 19, and 22 belong to the two-call web-app flow, which this gem does not ship;
+# rows 12 to 14 are pinned on the building blocks that flow composes. Row 15 is
+# the refresh step, hosted as refresh_authorization. Row 16 is refresh with a
+# credential (spec-version 5). Rows 17, 18, 20, and 21 are the code exchange
+# with a credential (spec-version 6).
 RSpec.describe "Authorization code with PKCE" do
   let(:zone) { ZoneFixture.new }
   let(:token_payload) { { "access_token" => "at_user", "token_type" => "Bearer" } }
@@ -152,6 +153,68 @@ RSpec.describe "Authorization code with PKCE" do
   it "rejects a client_secret without a client_id" do
     expect { exchange(token_http, client_secret: "csecret") }
       .to raise_error(Keycardai::OAuth::ConfigurationError)
+  end
+
+  it "17: a code exchange with a credential sends its headers and form fields, and no subject_token_type" do
+    credential = Keycardai::OAuth::ClientSecret.new("cid", "csecret")
+    http = token_http
+    exchange(http, credential: credential)
+
+    call = token_call(http)
+    expect(call.params).to eq(
+      "grant_type" => "authorization_code", "code" => "auth-code", "code_verifier" => "verifier",
+      "redirect_uri" => "http://127.0.0.1:8765/callback"
+    )
+    expect(call.headers["Authorization"]).to eq("Basic #{["cid:csecret"].pack("m0")}")
+
+    workload = Keycardai::OAuth::WorkloadIdentity.new(source: -> { "platform-token" }, client_id: "app_123")
+    http = token_http
+    exchange(http, credential: workload)
+
+    call = token_call(http)
+    expect(call.params).to include(
+      "grant_type" => "authorization_code", "code" => "auth-code", "code_verifier" => "verifier",
+      "redirect_uri" => "http://127.0.0.1:8765/callback", "client_assertion" => "platform-token",
+      "client_assertion_type" => "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", "client_id" => "app_123"
+    )
+    expect(call.params).not_to have_key("subject_token_type")
+    expect(call.headers).not_to have_key("Authorization")
+  end
+
+  it "18: a credential with client_id or client_secret, or without client authentication, fails before any request" do
+    credential = Keycardai::OAuth::ClientSecret.new("cid", "csecret")
+    no_client_auth = Object.new
+    http = token_http
+
+    expect { exchange(http, credential: credential, client_id: "cid") }
+      .to raise_error(Keycardai::OAuth::ConfigurationError)
+    expect { exchange(http, credential: credential, client_id: "cid", client_secret: "csecret") }
+      .to raise_error(Keycardai::OAuth::ConfigurationError)
+    expect { exchange(http, credential: no_client_auth) }
+      .to raise_error(Keycardai::OAuth::ConfigurationError)
+    expect(http.calls).to be_empty
+  end
+
+  it "20: a code exchange with a WebIdentity credential carries its assertion with aud = token_endpoint" do
+    Dir.mktmpdir do |dir|
+      credential = Keycardai::OAuth::WebIdentity.new(client_id: "client_abc", key_id: "k", storage_dir: dir)
+      http = token_http
+      exchange(http, credential: credential)
+
+      call = token_call(http)
+      claims = decode_jwt_part(call.params.fetch("client_assertion").split(".")[1])
+      expect(claims).to include("aud" => zone.token_url, "iss" => "client_abc")
+      expect(call.headers).not_to have_key("Authorization")
+    end
+  end
+
+  it "21: a failing client authentication raises the credential's error and sends no token request" do
+    credential = Keycardai::OAuth::WorkloadIdentity.new(source: -> { raise IOError, "no token" })
+    http = token_http
+
+    expect { exchange(http, credential: credential) }
+      .to raise_error(Keycardai::OAuth::WorkloadIdentityRuntimeError)
+    expect(token_call(http)).to be_nil
   end
   def refresh(http, **options)
     Keycardai::OAuth.refresh_authorization(zone.issuer, refresh_token: "rt1", client_id: "cid", http_client: http,

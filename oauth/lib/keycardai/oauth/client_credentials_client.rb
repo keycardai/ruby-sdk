@@ -41,21 +41,30 @@ module Keycardai
       # @param client_assertion [String, nil] client-authentication assertion,
       #   form-encoded in the body
       # @param client_assertion_type [String, nil]
+      # @param client_id [String, nil] the application credential the
+      #   assertion authenticates as, form-encoded beside client_assertion;
+      #   never sent with HTTP Basic
       # @return [TokenResponse]
       # @raise [OAuthError] an RFC 6749 §5.2 error response (invalid_client,
       #   invalid_scope, ...)
       # @raise [HTTPError, ProtocolError, NetworkError]
       def request_token(scope: nil, resource: nil, client_assertion: nil, client_assertion_type: nil,
-                        issuer: nil)
+                        client_id: nil, issuer: nil)
+        target = issuer || @issuer
+        if client_id && @credential&.authorization_header(issuer: target)
+          raise ConfigurationError, "client_id is sent beside client_assertion, not with HTTP Basic"
+        end
+
         post_token_request(
           {
             "grant_type" => GrantType::CLIENT_CREDENTIALS,
             "scope" => scope,
             "resource" => resource,
             "client_assertion" => client_assertion,
-            "client_assertion_type" => client_assertion_type
+            "client_assertion_type" => client_assertion_type,
+            "client_id" => client_id
           },
-          issuer: issuer || @issuer
+          issuer: target
         )
       end
     end
