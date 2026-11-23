@@ -15,6 +15,26 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.8.0-keycardai-oauth (2026-11-23)
+
+
+- fix(keycardai-oauth)!: require an issuer allow-list before sending client auth to a challenge-resolved issuer (#63)
+- * fix(keycardai-oauth): require allowed_issuers before sending client auth to a challenge-resolved issuer
+- authenticate_from_challenge takes the issuer from the protected resource's
+metadata. With client_secret set it now requires allowed_issuers and
+checks the resolved issuer against it before any request to that
+issuer. SDK-120.
+- * fix(keycardai-oauth): use a multi-zone ClientSecret's zone issuers as the challenge allow-list
+- When allowed_issuers is unset and the credential is a multi-zone
+ClientSecret, authenticate_from_challenge checks the resolved issuer
+against the credential's zone issuers. An explicit allowed_issuers wins.
+SDK-120.
+- * fix(keycardai-oauth): validate challenge issuer allow-list entries
+- Co-Authored-By: Larry Osakwe <larry@keycard.ai>
+- ---------
+- Co-authored-by: Larry Osakwe <larry@keycard.ai>
+Co-authored-by: devin-ai-keycard <devin-ai@keycard.ai>
+
 ## 0.7.1-keycardai-oauth (2026-11-23)
 
 
