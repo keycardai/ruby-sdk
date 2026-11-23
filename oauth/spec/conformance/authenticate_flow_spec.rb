@@ -158,8 +158,9 @@ RSpec.describe "Authenticate loopback flow" do
     end
   end
 
-  # Unit rows 23 to 28 (spec-version 7): client authentication goes to an
-  # issuer resolved from a challenge only when allowed_issuers lists it.
+  # Unit rows 23 to 32 (spec-version 7): client authentication goes to an
+  # issuer resolved from a challenge only when the allow-list includes it.
+  # Row 33 does not apply because Ruby has no challenge-entered refresh.
   describe "authenticate_from_challenge issuer pinning" do
     let(:prm_url) { "https://tool.example.com/.well-known/oauth-protected-resource" }
     let(:header) { %(Bearer resource_metadata="#{prm_url}") }
@@ -196,6 +197,40 @@ RSpec.describe "Authenticate loopback flow" do
       end
     end
 
+    describe "with a WorkloadIdentity credential" do
+      let(:credential) { Keycardai::OAuth::WorkloadIdentity.new(source: -> { "platform-token" }, client_id: "cid") }
+
+      it "24: rejects a credential without allowed_issuers before any request" do
+        http = challenge_http(zone.issuer)
+        browser = ->(_url) { raise "browser should not open" }
+
+        expect { from_challenge(http, browser, credential: credential) }
+          .to raise_error(Keycardai::OAuth::ConfigurationError, /allowed_issuers/)
+        expect(http.requests).to be_empty
+      end
+
+      it "26: sends the client assertion to an allowed issuer" do
+        http = challenge_http(zone.issuer)
+
+        response = from_challenge(http, redirecting_browser, credential: credential, allowed_issuers: [zone.issuer])
+
+        expect(response.access_token).to eq("at_user")
+        token_call = http.calls.find { |call| call.verb == :post && call.url == zone.token_url }
+        expect(token_call.params).to include("client_assertion" => "platform-token")
+      end
+    end
+
+    [nil, ""].each do |entry|
+      it "rejects allowed_issuers containing #{entry.inspect} before any request" do
+        http = challenge_http(zone.issuer)
+        browser = ->(_url) { raise "browser should not open" }
+
+        expect { from_challenge(http, browser, client_secret: "shh", allowed_issuers: [entry]) }
+          .to raise_error(Keycardai::OAuth::ConfigurationError, /allowed_issuers entries must be non-empty strings/)
+        expect(http.requests).to be_empty
+      end
+    end
+
     [{ client_secret: "shh" }, {}].each do |auth|
       it "rejects a resolved issuer outside allowed_issuers (#{auth.empty? ? "public" : "client_secret"})" do
         http = challenge_http(zone.issuer)
@@ -228,8 +263,6 @@ RSpec.describe "Authenticate loopback flow" do
         Keycardai::OAuth::ClientSecret.new(issuers.each_with_index.to_h { |iss, n| [iss, ["id-#{n}", "secret-#{n}"]] })
       end
 
-      # authenticate takes no credential yet, so the pass case stops at the
-      # call into it: the pin check let the resolved issuer through.
       it "proceeds when the resolved issuer is one of its zones" do
         credential = multi_zone("https://other.example.com", "#{zone.issuer}/")
         http = challenge_http(zone.issuer)

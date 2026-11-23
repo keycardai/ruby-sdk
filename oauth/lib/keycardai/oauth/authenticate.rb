@@ -103,9 +103,9 @@ module Keycardai
     # WWW-Authenticate challenge, then run authenticate against it.
     #
     # The protected resource names the issuer, so client authentication
-    # (client_secret, or credential once authenticate takes one) requires
-    # allowed_issuers. A multi-zone ClientSecret credential counts as the
-    # pin: with allowed_issuers unset, its zone issuers are the allow-list.
+    # (client_secret or credential) requires an allow-list. A multi-zone
+    # ClientSecret credential counts as the pin: with allowed_issuers unset
+    # or empty, its zone issuers are the allow-list.
     # The resolved issuer must equal one of them, compared without a
     # trailing slash. A public client may omit the list; when it sets one,
     # it is enforced the same way.
@@ -115,10 +115,11 @@ module Keycardai
     #   trusts; overrides a multi-zone ClientSecret's zone issuers
     # @param options [Hash] forwarded to authenticate
     # @return [TokenResponse]
-    # @raise [ConfigurationError] client authentication without
-    #   allowed_issuers, before any request; or a resolved issuer outside
-    #   allowed_issuers, after the resource metadata fetch and before any
-    #   request to that issuer
+    # @raise [ConfigurationError] invalid credential, an allowed_issuers entry
+    #   that is not a non-empty String, or client authentication without an
+    #   allow-list, before any request; or a resolved issuer outside the
+    #   allow-list, after the resource metadata fetch and before any request
+    #   to that issuer
     def self.authenticate_from_challenge(www_authenticate, http_client: HTTP::NetHTTPClient.new,
                                          allowed_issuers: nil, **options)
       # Credential errors surface before the resource metadata fetch.
@@ -151,6 +152,10 @@ module Keycardai
     # allowed_issuers when set, else a multi-zone ClientSecret's zone issuers.
     def self.challenge_allow_list(allowed_issuers, credential)
       allowed = Array(allowed_issuers)
+      unless allowed.all? { |entry| entry.is_a?(String) && !entry.empty? }
+        raise ConfigurationError, "allowed_issuers entries must be non-empty strings"
+      end
+
       return [allowed, "allowed_issuers"] unless allowed.empty?
       return [credential.issuers, "the multi-zone ClientSecret's zone issuers"] if
         credential.is_a?(ClientSecret) && credential.multi_zone?
