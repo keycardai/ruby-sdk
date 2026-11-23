@@ -48,6 +48,8 @@ module Keycardai
       # @param client_assertion [String, nil] client-authentication assertion,
       #   form-encoded in the body
       # @param client_assertion_type [String, nil]
+      # @param client_id [String, nil] the application credential the
+      #   assertion authenticates as, form-encoded beside client_assertion
       # @param issuer [String, nil] per-call zone selection: resolves the zone's
       #   token endpoint and, for a multi-zone credential, that zone's client
       #   authentication. Defaults to the client's issuer.
@@ -58,7 +60,7 @@ module Keycardai
       def exchange_token(subject_token:, subject_token_type: nil, resource: nil,
                          audience: nil, scope: nil, requested_token_type: nil, actor_token: nil,
                          actor_token_type: nil, client_assertion: nil, client_assertion_type: nil,
-                         issuer: nil)
+                         client_id: nil, issuer: nil)
         raise ArgumentError, "actor_token_type is required when actor_token is set" if actor_token && !actor_token_type
 
         target = issuer || @issuer
@@ -71,7 +73,8 @@ module Keycardai
           "actor_token" => actor_token,
           "actor_token_type" => actor_token_type,
           "client_assertion" => client_assertion,
-          "client_assertion_type" => client_assertion_type
+          "client_assertion_type" => client_assertion_type,
+          "client_id" => client_id
         }.compact
         post_token_request(base_exchange_params(subject_token, target).merge(overrides), issuer: target)
       end

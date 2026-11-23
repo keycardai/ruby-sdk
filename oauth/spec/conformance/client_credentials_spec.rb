@@ -62,6 +62,42 @@ RSpec.describe Keycardai::OAuth::ClientCredentialsClient do
     )
   end
 
+  it "4a: client_assertion, client_assertion_type, and client_id are form-encoded with no Basic header" do
+    http = token_http
+    client(http).request_token(
+      client_assertion: "assertion-jwt",
+      client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+      client_id: "app_123"
+    )
+
+    call = token_call(http)
+    expect(call.params).to include(
+      "client_assertion" => "assertion-jwt",
+      "client_assertion_type" => "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+      "client_id" => "app_123"
+    )
+    expect(call.headers).not_to have_key("Authorization")
+  end
+
+  it "rejects a body client_id on a Basic-authenticated client before any request" do
+    http = token_http
+
+    expect { client(http, client_id: "cid", client_secret: "csecret").request_token(client_id: "app_123") }
+      .to raise_error(Keycardai::OAuth::ConfigurationError)
+    expect(http.calls).to be_empty
+  end
+
+  it "accepts a body client_id on a client whose credential sends no Basic header" do
+    http = token_http
+    credential = Keycardai::OAuth::WorkloadIdentity.new(source: -> { "platform-token" })
+
+    client(http, credential: credential).request_token(client_assertion: "platform-token", client_id: "app_123")
+
+    call = token_call(http)
+    expect(call.params).to include("client_id" => "app_123")
+    expect(call.headers).not_to have_key("Authorization")
+  end
+
   it "5: parses a 2xx token response" do
     response = client(token_http).request_token
 

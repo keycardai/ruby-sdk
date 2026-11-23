@@ -13,9 +13,10 @@ module Keycardai
     class WorkloadIdentity
       # @param source [#identity_token, #call] supplies the platform-signed
       #   OIDC token; a bare callable is accepted
-      # @param client_id [String, nil] the Keycard application credential this
-      #   workload authenticates as; sent as the client_id form parameter when
-      #   set (token-federation credentials are resolved by it)
+      # @param client_id [String, nil] public ID of the Keycard application
+      #   credential this workload authenticates as; sent as the client_id form
+      #   parameter on every token request and client authentication when set.
+      #   A v2 token credential requires it; a v1 credential rejects it
       # @raise [ConfigurationError] when the source is missing or has neither
       #   an identity_token method nor call
       def initialize(source:, client_id: nil)
