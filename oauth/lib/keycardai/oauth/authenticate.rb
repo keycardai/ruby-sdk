@@ -37,8 +37,8 @@ module Keycardai
     # @raise [InteractionTimeoutError] the user did not complete the redirect
     # @raise [OAuthError] the authorization server denied the request
     # @raise [ProtocolError] the redirect's state did not match (code state_mismatch)
-    # @raise [ConfigurationError] credential combined with client_secret, or
-    #   without client_authentication
+    # @raise [ConfigurationError] credential combined with client_secret,
+    #   without client_authentication, or a WorkloadIdentity without client_id
     def self.authenticate(issuer:, client_id:, scope: nil, resources: [], port: DEFAULT_CALLBACK_PORT,
                           callback_timeout: DEFAULT_CALLBACK_TIMEOUT, client_secret: nil, credential: nil,
                           verifier_length: PKCE::DEFAULT_VERIFIER_LENGTH,

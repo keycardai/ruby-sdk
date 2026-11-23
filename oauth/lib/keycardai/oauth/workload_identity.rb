@@ -72,7 +72,8 @@ module Keycardai
         }.compact)
       end
 
-      # Raise unless client_id is set. The interactive grants (refresh,
+      # Raise unless client_id is set. The interactive grants (the code
+      # exchange, authenticate, authenticate_from_challenge, refresh and
       # device authorization) need a v2 token credential, which the zone
       # resolves by client_id, so they call this before any request.
       #

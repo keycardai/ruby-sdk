@@ -57,8 +57,9 @@ module Keycardai
     # @param timeout [Numeric, nil]
     # @return [TokenResponse]
     # @raise [ConfigurationError] before any request: client_secret without
-    #   client_id, credential set together with client_id or client_secret, or
-    #   a credential without client_authentication
+    #   client_id, credential set together with client_id or client_secret, a
+    #   credential without client_authentication, or a WorkloadIdentity
+    #   without client_id
     # @raise [OAuthError] an RFC 6749 §5.2 error response (invalid_grant, ...)
     # @raise [HTTPError, ProtocolError, NetworkError]
     def self.exchange_authorization_code(issuer, code:, code_verifier:, redirect_uri:, client_id: nil,
@@ -108,7 +109,8 @@ module Keycardai
     # @return [TokenResponse]
     # @raise [ConfigurationError] before any request: credential set together
     #   with client_id or client_secret, a credential without
-    #   client_authentication, or neither credential nor client_id
+    #   client_authentication, a WorkloadIdentity without client_id, or
+    #   neither credential nor client_id
     # @raise [OAuthError] an RFC 6749 §5.2 error response; error == "invalid_grant"
     #   means the refresh token is expired, revoked, or unknown and the user must
     #   authorize again

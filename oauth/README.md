@@ -127,7 +127,10 @@ stored_refresh_token = token.refresh_token if token.refresh_token
 
 A client with a credential passes `credential:` in place of `client_id` and
 `client_secret`. `ClientSecret`, `WebIdentity`, and `WorkloadIdentity` all work
-here. A credential of your own must respond to `client_authentication`.
+here. A `WorkloadIdentity` needs `client_id:` (the public ID of a v2 token
+credential) for refresh, the code exchange, `authenticate` and device
+authorization; without it these raise `ConfigurationError` before any request.
+A credential of your own must respond to `client_authentication`.
 
 ### Sign in a device with no browser
 
