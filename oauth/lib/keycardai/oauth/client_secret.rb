@@ -47,7 +47,11 @@ module Keycardai
         !@pairs.nil?
       end
 
-      # @return [Array<String>] the issuer URLs this credential can serve
+      # The issuer URLs this credential can serve, without a trailing slash.
+      # authenticate_from_challenge uses a multi-zone credential's issuers as
+      # its allow-list when allowed_issuers is unset.
+      #
+      # @return [Array<String>] the zone issuers; empty for a single zone
       def issuers
         multi_zone? ? @pairs.keys : []
       end

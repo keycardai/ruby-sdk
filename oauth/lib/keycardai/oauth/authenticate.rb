@@ -102,18 +102,67 @@ module Keycardai
     # Challenge-driven entry to the login flow: resolve the issuer from a
     # WWW-Authenticate challenge, then run authenticate against it.
     #
+    # The protected resource names the issuer, so client authentication
+    # (client_secret or credential) requires an allow-list. A multi-zone
+    # ClientSecret credential counts as the pin: with allowed_issuers unset
+    # or empty, its zone issuers are the allow-list.
+    # The resolved issuer must equal one of them, compared without a
+    # trailing slash. A public client may omit the list; when it sets one,
+    # it is enforced the same way.
+    #
     # @param www_authenticate [String] the WWW-Authenticate header value
+    # @param allowed_issuers [Array<String>, nil] the issuers the caller
+    #   trusts; overrides a multi-zone ClientSecret's zone issuers
     # @param options [Hash] forwarded to authenticate
     # @return [TokenResponse]
-    def self.authenticate_from_challenge(www_authenticate, http_client: HTTP::NetHTTPClient.new, **options)
+    # @raise [ConfigurationError] invalid credential, an allowed_issuers entry
+    #   that is not a non-empty String, or client authentication without an
+    #   allow-list, before any request; or a resolved issuer outside the
+    #   allow-list, after the resource metadata fetch and before any request
+    #   to that issuer
+    def self.authenticate_from_challenge(www_authenticate, http_client: HTTP::NetHTTPClient.new,
+                                         allowed_issuers: nil, **options)
       # Credential errors surface before the resource metadata fetch.
       if options[:credential]
         ClientAuth.validate(credential: options[:credential], client_id: nil, client_secret: options[:client_secret])
       end
+      allowed, source = challenge_allow_list(allowed_issuers, options[:credential])
+      client_auth = !options[:client_secret].to_s.empty? || !options[:credential].nil?
+      if client_auth && allowed.empty?
+        raise ConfigurationError,
+              "pass allowed_issuers to send client_secret or credential to an issuer resolved from a challenge"
+      end
+
       issuer = resolve_issuer_from_challenge(www_authenticate, http_client: http_client,
                                                                timeout: options[:timeout])
+      check_challenge_issuer(issuer, allowed, source)
       authenticate(issuer: issuer, http_client: http_client, **options)
     end
+
+    # Raises unless issuer is in a non-empty allowed, compared without a
+    # trailing slash. An empty list allows any issuer (a public client).
+    def self.check_challenge_issuer(issuer, allowed, source)
+      return if allowed.empty? || allowed.any? { |a| a.chomp("/") == issuer.chomp("/") }
+
+      raise ConfigurationError, "the challenge resolved issuer #{issuer}, which is not in #{source}"
+    end
+    private_class_method :check_challenge_issuer
+
+    # The allow-list for a challenge entry and how to name it in an error:
+    # allowed_issuers when set, else a multi-zone ClientSecret's zone issuers.
+    def self.challenge_allow_list(allowed_issuers, credential)
+      allowed = Array(allowed_issuers)
+      unless allowed.all? { |entry| entry.is_a?(String) && !entry.empty? }
+        raise ConfigurationError, "allowed_issuers entries must be non-empty strings"
+      end
+
+      return [allowed, "allowed_issuers"] unless allowed.empty?
+      return [credential.issuers, "the multi-zone ClientSecret's zone issuers"] if
+        credential.is_a?(ClientSecret) && credential.multi_zone?
+
+      [[], "allowed_issuers"]
+    end
+    private_class_method :challenge_allow_list
 
     # Internals of the loopback flow. Not public API.
     module Loopback
