@@ -15,6 +15,26 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.7.1-keycardai-oauth (2026-11-23)
+
+
+- fix(keycardai-oauth): WorkloadIdentity requires client_id before an interactive grant (#66)
+- * fix(keycardai-oauth): WorkloadIdentity requires client_id before an interactive grant
+- The refresh and device grants need a v2 token credential, which the zone
+resolves by client_id. WorkloadIdentity gets check_client_authentication,
+and ClientAuth.validate calls it when a credential responds to it, so
+refresh_authorization and DeviceAuthorizationClient.new raise
+ConfigurationError before any request, discovery included, when client_id
+is not set. Token exchange does not check.
+- Workload Identity spec-version 4 (rows 4d, 4e), Authorization Code with
+PKCE spec-version 8 (row 34), Device Authorization spec-version 5 (row 34).
+- Refs SDK-122
+- * fix(keycardai-oauth): check the credential before the challenge's resource metadata fetch
+- * docs(keycardai-oauth): name the WorkloadIdentity client_id requirement on every interactive grant
+- ---------
+- Co-authored-by: Larry Osakwe <23560354+Larry-Osakwe@users.noreply.github.com>
+Co-authored-by: Larry Osakwe <larry@keycard.ai>
+
 ## 0.7.0-keycardai-oauth (2026-11-19)
 
 
