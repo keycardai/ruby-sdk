@@ -26,12 +26,15 @@ module Keycardai
         end
       end
 
-      # @param socket [String, nil] the caller's explicit path
+      # @param socket [String, Pathname, nil] the caller's explicit path
       # @param env [#[]] where the variables are read from
       # @return [Resolved]
       # @raise [ConfigurationError] when the default socket is needed and cannot
       #   be resolved
       def self.resolve(socket:, env:)
+        # Pathname#empty? asks whether the file is empty, which a live socket
+        # always is, so the path is tested as a string.
+        socket = socket&.to_s
         return Resolved.new(path: socket, rule: :socket) if set?(socket)
 
         from_env = env["KEYCARD_SOCKET"]

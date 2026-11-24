@@ -35,7 +35,8 @@ module Keycardai
       # exactly but would also accept without an offset.
       RFC3339 = /\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})\z/i
 
-      # @param socket [String, nil] the agent's socket; resolved from +env+ when nil
+      # @param socket [String, Pathname, nil] the agent's socket; resolved from
+      #   +env+ when nil or empty
       # @param env [#[]] where KEYCARD_SOCKET and the default-socket variables
       #   are read from
       # @param workload [String] name shown in the approval prompt; self-declared

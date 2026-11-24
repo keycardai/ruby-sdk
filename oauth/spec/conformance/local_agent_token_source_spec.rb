@@ -418,6 +418,18 @@ RSpec.describe Keycardai::OAuth::AgentTokenSource do
       end
     end
 
+    it "a Pathname socket naming a live socket is dialled over KEYCARD_SOCKET" do
+      FakeAgent.short_tmpdir do |dir|
+        FakeAgent.serve(File.join(dir, "explicit.sock")) do |explicit|
+          FakeAgent.serve(File.join(dir, "env.sock")) do |from_env|
+            mint(described_class.new(socket: Pathname(explicit.path), env: { "KEYCARD_SOCKET" => from_env.path }))
+
+            expect([explicit.requests.size, from_env.requests.size]).to eq([1, 0])
+          end
+        end
+      end
+    end
+
     {
       "org" => { org: "org\r\nX-Injected: 1" },
       "zone" => { zone: "zone\0" }
