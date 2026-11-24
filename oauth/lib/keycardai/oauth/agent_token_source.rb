@@ -87,6 +87,22 @@ module Keycardai
         token_from(response.body)
       end
 
+      # Shows the socket option and the request's self-declared fields. Never
+      # shows +env+, which defaults to the whole process environment.
+      #
+      # @return [String]
+      def inspect
+        shown = { socket: @socket, workload: @workload, app_id: @app_id, org: @org, zone: @zone }
+                .map { |name, value| "#{name}=#{value.inspect}" }
+        "#<#{self.class} #{shown.join(", ")}>"
+      end
+      alias to_s inspect
+
+      # Used by pp.
+      def pretty_print(printer)
+        printer.text(inspect)
+      end
+
       private
 
       # org and zone travel as header values, and every string as JSON; a
