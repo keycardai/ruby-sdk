@@ -14,6 +14,8 @@ protected-resource with path insertion, an RFC 8414 authorization-server proxy,
 and JWKS), and an AuthProvider whose `grant` middleware exchanges the caller's
 token per resource into an AccessContext. Wraps no MCP SDK.
 
+## 0.1.3-keycardai-mcp (2026-11-24)
+
 ## 0.1.2-keycardai-mcp (2026-10-12)
 
 
