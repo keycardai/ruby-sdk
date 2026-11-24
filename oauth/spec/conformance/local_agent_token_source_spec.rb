@@ -343,6 +343,28 @@ RSpec.describe Keycardai::OAuth::AgentTokenSource do
           .to eq("Accept" => "application/json", "Authorization" => "Bearer resource-token")
       end
     end
+
+    it "39: a reported scopes that is a string, then an array holding a non-string, is an AgentResponseError" do
+      ["a b", %w[a] + [1]].each do |scopes|
+        http = agent_http(payload: { "token" => "t", "scopes" => scopes })
+
+        expect { mint(source(http)) }.to raise_error(Keycardai::OAuth::AgentResponseError, /scopes/)
+      end
+    end
+
+    it "40: an expiresAt of null has a nil expires_in" do
+      expect(mint(source(agent_http(payload: { "token" => "t", "expiresAt" => nil }))).expires_in).to be_nil
+    end
+
+    it "41: an empty socket is treated as unset, so KEYCARD_SOCKET in env is dialled" do
+      FakeAgent.short_tmpdir do |dir|
+        FakeAgent.serve(File.join(dir, "env.sock")) do |agent|
+          mint(described_class.new(socket: "", env: { "KEYCARD_SOCKET" => agent.path }))
+
+          expect(agent.requests.size).to eq(1)
+        end
+      end
+    end
   end
 
   describe "beyond the spec rows" do
@@ -384,14 +406,6 @@ RSpec.describe Keycardai::OAuth::AgentTokenSource do
 
       expect(mint(source(offset, clock: clock)).expires_in).to eq(60)
       expect(mint(source(lowercase, clock: clock)).expires_in).to eq(60)
-    end
-
-    ["a b", %w[a] + [1]].each do |scopes|
-      it "a scopes value of #{scopes.inspect}, not a list of strings, is an AgentResponseError" do
-        http = agent_http(payload: { "token" => "t", "scopes" => scopes })
-
-        expect { mint(source(http)) }.to raise_error(Keycardai::OAuth::AgentResponseError, /scopes/)
-      end
     end
 
     it "an empty reported scopes list leaves scope absent" do
