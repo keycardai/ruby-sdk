@@ -24,6 +24,7 @@ Capabilities:
 - Application credentials: ClientSecret (incl. multi-zone), WebIdentity (RFC 7523),
   WorkloadIdentity with pluggable identity token sources
 - AccessContext: the non-throwing per-request container for delegated tokens
+- Resource tokens from the local Keycard agent, with no application credential
 
 ## Quickstart
 
@@ -180,3 +181,37 @@ result = client.impersonate(
 The issued token's `sub` is the target user. It is a leaf credential: a zone
 refuses it as the subject of a further exchange, so impersonate again rather
 than trying to trade it up.
+
+### Get a token from the local Keycard agent
+
+A process on a developer's machine can ask the local Keycard agent for a token
+instead of holding an application credential. The agent is the server
+`keycard run` starts for its child process, or the `keycard agent` daemon; it
+mints with the developer's own zone session and asks them to approve each new
+request.
+
+```ruby
+source = Keycardai::OAuth::AgentTokenSource.new(
+  workload: "incident-digest", # shown in the approval prompt
+  org: "your-org-id",          # needed by the multi-zone daemon
+  zone: "your-zone-id",
+)
+
+token = source.resource_token(resource: "https://api.github.com", scopes: ["repo"])
+
+github = Keycardai::OAuth::ResourceTransport.new(
+  source: source, resource: "https://api.github.com", scopes: ["repo"],
+)
+github.get("https://api.github.com/user")
+```
+
+With no `socket:`, the source reads `KEYCARD_SOCKET`, which `keycard run` sets,
+and otherwise the daemon's default socket, from the process environment. This
+is the one environment read beside `FileTokenSource`'s; pass `socket:` or
+`env:` to keep the process environment out of it. A first request blocks until
+the human answers the prompt, so there is no default timeout; pass `timeout:`
+to bound it. A refusal raises `AgentError`, and
+`Keycardai::OAuth.declined?(error)`, `rate_limited?`, `prompter_unavailable?`,
+`authorization_required?`, `application_not_found?` and `unavailable?` classify
+it, through any wrapping. A runnable example is in
+[`examples/local-agent-token-source`](https://github.com/keycardai/ruby-sdk/tree/main/examples/local-agent-token-source).
