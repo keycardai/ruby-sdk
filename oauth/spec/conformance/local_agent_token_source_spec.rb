@@ -455,6 +455,16 @@ RSpec.describe Keycardai::OAuth::AgentTokenSource do
       expect(http.calls).to be_empty
     end
 
+    ["read", nil, ["read", :write]].each do |scopes|
+      it "requested scopes of #{scopes.inspect} are a configuration error and nothing is sent" do
+        http = agent_http
+
+        expect { mint(source(http), scopes: scopes) }
+          .to raise_error(Keycardai::OAuth::ConfigurationError, /scopes must be an Array of Strings/)
+        expect(http.calls).to be_empty
+      end
+    end
+
     it "an over-long socket path is a NetworkError naming it" do
       path = "/#{"a" * 200}/agent.sock"
 

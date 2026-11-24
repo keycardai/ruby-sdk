@@ -69,9 +69,9 @@ module Keycardai
       # @param scopes [Array<String>] sent exactly as given
       # @return [TokenResponse] +expires_in+ is nil when the agent sent no
       #   expiry; +scope+ is nil unless the agent reported the grant
-      # @raise [ConfigurationError] an empty resource, a control character in
-      #   org or zone, a string that is not valid UTF-8, or a default socket
-      #   that cannot be resolved
+      # @raise [ConfigurationError] an empty resource, scopes that is not an
+      #   Array of Strings, a control character in org or zone, a string that
+      #   is not valid UTF-8, or a default socket that cannot be resolved
       # @raise [NetworkError] the socket cannot be reached; names the path
       # @raise [AgentError] the agent refused
       # @raise [AgentResponseError] the agent's 200 response is unusable
@@ -93,7 +93,8 @@ module Keycardai
       # control character or invalid UTF-8 would otherwise escape as
       # ArgumentError or JSON::GeneratorError rather than an SDK error.
       def validate_request(resource, scopes)
-        strings = { "resource" => [resource], "scopes" => Array(scopes), "workload" => [@workload],
+        validate_scopes(scopes)
+        strings = { "resource" => [resource], "scopes" => scopes, "workload" => [@workload],
                     "app_id" => [@app_id], "org" => [@org], "zone" => [@zone] }
         strings.each do |name, values|
           raise ConfigurationError, "#{name} is not valid UTF-8" unless values.all? { |v| !v.is_a?(String) || utf8?(v) }
@@ -101,6 +102,14 @@ module Keycardai
         { "org" => @org, "zone" => @zone }.each do |name, value|
           raise ConfigurationError, "#{name} contains a control character" if CONTROL_CHARACTER.match?(value.to_s)
         end
+      end
+
+      # A String would otherwise go out as a JSON string where the agent
+      # expects an array.
+      def validate_scopes(scopes)
+        return if scopes.is_a?(Array) && scopes.all?(String)
+
+        raise ConfigurationError, "scopes must be an Array of Strings"
       end
 
       def utf8?(value)
@@ -118,7 +127,7 @@ module Keycardai
       end
 
       def request_body(resource, scopes)
-        body = { "resource" => resource, "scopes" => scopes || [], "workload" => @workload || "" }
+        body = { "resource" => resource, "scopes" => scopes, "workload" => @workload || "" }
         body["appId"] = @app_id unless @app_id.nil? || @app_id.empty?
         body
       end
