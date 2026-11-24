@@ -482,6 +482,15 @@ RSpec.describe Keycardai::OAuth::AgentTokenSource do
       end
     end
 
+    it "a non-200 response with a body over 1 MiB is still an HTTPError carrying the status" do
+      FakeAgent.short_tmpdir do |dir|
+        FakeAgent.serve(File.join(dir, "agent.sock"), ->(_request) { [503, "x" * ((1 << 20) + 1)] }) do |agent|
+          expect { mint(described_class.new(socket: agent.path)) }
+            .to raise_error(Keycardai::OAuth::HTTPError) { |e| expect(e.status).to eq(503) }
+        end
+      end
+    end
+
     it "a timeout bounds a request the agent never answers" do
       FakeAgent.short_tmpdir do |dir|
         FakeAgent.serve(File.join(dir, "agent.sock"), ->(_request) { sleep }) do |agent|

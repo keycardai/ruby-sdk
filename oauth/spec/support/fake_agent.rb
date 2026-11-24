@@ -53,6 +53,8 @@ class FakeAgent
     loop do
       client = @server.accept
       exchange(client)
+    rescue Errno::EPIPE, Errno::ECONNRESET, Errno::ENOTCONN
+      # The client stopped reading a long error body and closed.
     ensure
       client&.close
     end

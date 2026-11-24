@@ -17,8 +17,13 @@ module Keycardai
       # Unlike NetHTTPClient, a request without a timeout waits without bound:
       # the peer is a local process that may be waiting on a human.
       class UnixSocketClient
-        # Largest response body accepted; a longer one is refused, not truncated.
+        # Largest 2xx response body accepted; a longer one is refused, not
+        # truncated.
         MAX_BODY_BYTES = 1 << 20
+        # Bytes of any other response's body returned. Reading stops there and
+        # the rest is never read, so a long error body still comes back as a
+        # Response carrying its status.
+        MAX_ERROR_BODY_BYTES = 64 * 1024
         # Longest status or header line accepted.
         MAX_LINE_BYTES = 16 * 1024
         # Header lines, and their total bytes, accepted before the response is
@@ -115,9 +120,10 @@ module Keycardai
         def read_response(reader)
           status = reader.line[%r{\AHTTP/1\.[01] (\d{3})(?: |\z)}, 1] ||
                    raise(NetworkError, "#{@socket_path} answered with a malformed status line")
+          status = status.to_i
           headers = read_headers(reader)
-          Response.new(status: status.to_i, headers: headers,
-                       body: read_body(reader, headers).force_encoding(Encoding::UTF_8))
+          body = (200..299).cover?(status) ? read_body(reader, headers) : read_error_body(reader, headers)
+          Response.new(status: status, headers: headers, body: body.force_encoding(Encoding::UTF_8))
         end
 
         def read_headers(reader)
@@ -149,19 +155,38 @@ module Keycardai
         end
 
         def read_body(reader, headers)
+          length = content_length(headers) unless final_transfer_coding(headers)
+          raise body_too_large if length && length > MAX_BODY_BYTES
+
+          body = read_framed(reader, headers, MAX_BODY_BYTES + 1)
+          raise body_too_large if body.bytesize > MAX_BODY_BYTES
+
+          body
+        rescue ArgumentError
+          raise malformed_framing
+        end
+
+        def read_error_body(reader, headers)
+          read_framed(reader, headers, MAX_ERROR_BODY_BYTES)
+        rescue ArgumentError
+          raise malformed_framing
+        end
+
+        # The body, or its first +limit+ bytes when it is longer.
+        def read_framed(reader, headers, limit)
           if (coding = final_transfer_coding(headers))
             raise ArgumentError, "unsupported transfer coding" unless coding == "chunked"
 
-            read_chunked(reader)
+            read_chunked(reader, limit)
           elsif (length = content_length(headers))
-            raise body_too_large if length > MAX_BODY_BYTES
-
-            reader.bytes(length)
+            reader.bytes([length, limit].min)
           else
-            reader.rest(MAX_BODY_BYTES + 1).tap { |body| raise body_too_large if body.bytesize > MAX_BODY_BYTES }
+            reader.rest(limit)
           end
-        rescue ArgumentError
-          raise NetworkError, "#{@socket_path} answered with malformed body framing"
+        end
+
+        def malformed_framing
+          NetworkError.new("#{@socket_path} answered with malformed body framing")
         end
 
         def body_too_large
@@ -184,14 +209,15 @@ module Keycardai
           Integer(values.first, 10)
         end
 
-        # Stops at the last chunk without reading trailers: the connection is
-        # closed after the response, so nothing after the body needs consuming.
-        def read_chunked(reader)
+        # Stops at the last chunk, or once +limit+ bytes are read, without
+        # reading trailers: the connection is closed after the response, so
+        # nothing after what is returned needs consuming.
+        def read_chunked(reader, limit)
           body = String.new(encoding: Encoding::BINARY)
           loop do
             size = chunk_size(reader.line)
             return body if size.zero?
-            raise body_too_large if body.bytesize + size > MAX_BODY_BYTES
+            return body << reader.bytes(limit - body.bytesize) if body.bytesize + size >= limit
 
             body << reader.bytes(size)
             raise ArgumentError, "chunk data not followed by CRLF" unless reader.line.empty?

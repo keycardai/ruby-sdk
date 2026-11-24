@@ -26,6 +26,8 @@ RSpec.describe Keycardai::OAuth::HTTP::UnixSocketClient do
     length = request[/^Content-Length: (\d+)/i, 1].to_i
     request << client.readpartial(64 * 1024) while request.split("\r\n\r\n", 2)[1].bytesize < length
     client.write(response)
+  rescue Errno::EPIPE, Errno::ECONNRESET, Errno::ENOTCONN
+    # The client stopped reading a long error body and closed.
   ensure
     client.close
   end
@@ -149,6 +151,33 @@ RSpec.describe Keycardai::OAuth::HTTP::UnixSocketClient do
         exact = "x" * described_class::MAX_BODY_BYTES
 
         expect(response_from(ok("Content-Length: #{exact.bytesize}\r\n", exact)).body.bytesize).to eq(exact.bytesize)
+      end
+    end
+
+    describe "error body over MAX_ERROR_BODY_BYTES" do
+      let(:limit) { described_class::MAX_ERROR_BODY_BYTES }
+      let(:long) { "x" * (described_class::MAX_BODY_BYTES + 1) }
+
+      def error(headers, body)
+        "HTTP/1.1 502 Bad Gateway\r\n#{headers}\r\n#{body}"
+      end
+
+      {
+        "Content-Length" => ->(body) { ["Content-Length: #{body.bytesize}\r\n", body] },
+        "an unframed body" => ->(body) { ["", body] },
+        "chunks" => ->(body) { ["Transfer-Encoding: chunked\r\n", "#{body.bytesize.to_s(16)}\r\n#{body}\r\n0\r\n\r\n"] }
+      }.each do |framing, frame|
+        it "is truncated, with its status, when framed by #{framing}, even past MAX_BODY_BYTES" do
+          response = response_from(error(*frame.call(long)))
+
+          expect([response.status, response.body.bytesize]).to eq([502, limit])
+        end
+      end
+
+      it "is returned whole at exactly the limit" do
+        body = "x" * limit
+
+        expect(response_from(error("Content-Length: #{limit}\r\n", body)).body).to eq(body)
       end
     end
 
