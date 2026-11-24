@@ -202,6 +202,8 @@ module Keycardai
 
       def validated_token(token)
         raise AgentResponseError, "Keycard agent response has no token" unless token.is_a?(String) && !token.empty?
+        # JSON.parse keeps invalid bytes, and matching them raises ArgumentError.
+        raise AgentResponseError, "Keycard agent token is not valid UTF-8" unless token.valid_encoding?
         raise AgentResponseError, "Keycard agent token contains a control character" if CONTROL_CHARACTER.match?(token)
 
         token
@@ -222,8 +224,8 @@ module Keycardai
       # rather than falling back to the requested scopes.
       def granted_scopes(scopes)
         return nil if scopes.nil?
-        unless scopes.is_a?(Array) && scopes.all?(String)
-          raise AgentResponseError, "Keycard agent scopes is not a list of strings"
+        unless scopes.is_a?(Array) && scopes.all? { |scope| scope.is_a?(String) && scope.valid_encoding? }
+          raise AgentResponseError, "Keycard agent scopes is not a list of UTF-8 strings"
         end
 
         scopes unless scopes.empty?

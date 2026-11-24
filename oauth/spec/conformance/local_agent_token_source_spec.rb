@@ -367,12 +367,31 @@ RSpec.describe Keycardai::OAuth::AgentTokenSource do
       end
     end
 
+    it "42: a CR LF in org, then in zone, is a configuration error and nothing is sent" do
+      [{ org: "org\r\n" }, { zone: "zone\r\n" }].each do |options|
+        http = agent_http
+
+        expect { mint(source(http, **options)) }.to raise_error(Keycardai::OAuth::ConfigurationError)
+        expect(http.calls).to be_empty
+      end
+    end
+
     it "43: a 200 response whose body is over 1 MiB is an AgentResponseError" do
       FakeAgent.short_tmpdir do |dir|
         long = { "token" => "t", "padding" => "x" * (1 << 20) }
         FakeAgent.serve(File.join(dir, "agent.sock"), ->(_request) { [200, long] }) do |agent|
           expect { mint(described_class.new(socket: agent.path)) }
             .to raise_error(Keycardai::OAuth::AgentResponseError, /over 1048576 bytes/)
+        end
+      end
+    end
+
+    it "44: a token that is not valid UTF-8 is an AgentResponseError" do
+      FakeAgent.short_tmpdir do |dir|
+        invalid = "{\"token\":\"agent-\xFF-token\"}".b
+        FakeAgent.serve(File.join(dir, "agent.sock"), ->(_request) { [200, invalid] }) do |agent|
+          expect { mint(described_class.new(socket: agent.path)) }
+            .to raise_error(Keycardai::OAuth::AgentResponseError, /not valid UTF-8/)
         end
       end
     end
@@ -514,6 +533,12 @@ RSpec.describe Keycardai::OAuth::AgentTokenSource do
             .to raise_error(Keycardai::OAuth::HTTPError) { |e| expect(e.status).to eq(503) }
         end
       end
+    end
+
+    it "a reported scope that is not valid UTF-8 is an AgentResponseError" do
+      http = agent_http(payload: "{\"token\":\"t\",\"scopes\":[\"read-\xFF\"]}".b)
+
+      expect { mint(source(http)) }.to raise_error(Keycardai::OAuth::AgentResponseError, /scopes/)
     end
 
     it "a 200 body over 1 MiB from an injected http_client is an AgentResponseError" do
