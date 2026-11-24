@@ -222,7 +222,8 @@ RSpec.describe Keycardai::OAuth::AgentTokenSource do
       predicates = {
         "permission_denied" => :declined?, "resource_exhausted" => :rate_limited?,
         "failed_precondition" => :prompter_unavailable?, "unauthenticated" => :authorization_required?,
-        "not_found" => :application_not_found?, "unavailable" => :unavailable?, "invalid_argument" => nil
+        "not_found" => :application_not_found?, "unavailable" => :unavailable?, "invalid_argument" => nil,
+        "internal" => nil, "unknown" => nil
       }
       predicates.each do |code, predicate|
         http = agent_http(status: 403, payload: { "code" => code, "message" => "because #{code}" })
@@ -276,7 +277,7 @@ RSpec.describe Keycardai::OAuth::AgentTokenSource do
 
     it "34: retryable? is true for resource_exhausted and unavailable only" do
       codes = %w[permission_denied resource_exhausted failed_precondition unauthenticated not_found
-                 unavailable invalid_argument]
+                 unavailable invalid_argument internal unknown]
       retryable = codes.select { |code| Keycardai::OAuth::AgentError.new("", code: code).retryable? }
 
       expect(retryable).to eq(%w[resource_exhausted unavailable])

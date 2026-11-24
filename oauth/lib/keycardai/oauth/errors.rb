@@ -139,8 +139,8 @@ module Keycardai
 
     # Connect error codes the local Keycard agent refuses an IssueToken request
     # with, in the snake_case spelling Connect puts on the wire. The
-    # predicates in agent_token_source.rb match the first six; +INVALID_ARGUMENT+ has
-    # no predicate.
+    # predicates in agent_token_source.rb match the first six;
+    # +INVALID_ARGUMENT+, +INTERNAL+ and +UNKNOWN+ have no predicate.
     module AgentCode
       PERMISSION_DENIED = "permission_denied"
       RESOURCE_EXHAUSTED = "resource_exhausted"
@@ -149,6 +149,11 @@ module Keycardai
       NOT_FOUND = "not_found"
       UNAVAILABLE = "unavailable"
       INVALID_ARGUMENT = "invalid_argument"
+      # The agent failed: no token from the authorization server, an audit
+      # log it could not open, or a fault of its own.
+      INTERNAL = "internal"
+      # An error the agent did not classify.
+      UNKNOWN = "unknown"
     end
 
     # The local Keycard agent refused to issue a token. +message+ is the
