@@ -366,6 +366,16 @@ RSpec.describe Keycardai::OAuth::AgentTokenSource do
         end
       end
     end
+
+    it "43: a 200 response whose body is over 1 MiB is an AgentResponseError" do
+      FakeAgent.short_tmpdir do |dir|
+        long = { "token" => "t", "padding" => "x" * (1 << 20) }
+        FakeAgent.serve(File.join(dir, "agent.sock"), ->(_request) { [200, long] }) do |agent|
+          expect { mint(described_class.new(socket: agent.path)) }
+            .to raise_error(Keycardai::OAuth::AgentResponseError, /over 1048576 bytes/)
+        end
+      end
+    end
   end
 
   describe "beyond the spec rows" do
@@ -504,6 +514,12 @@ RSpec.describe Keycardai::OAuth::AgentTokenSource do
             .to raise_error(Keycardai::OAuth::HTTPError) { |e| expect(e.status).to eq(503) }
         end
       end
+    end
+
+    it "a 200 body over 1 MiB from an injected http_client is an AgentResponseError" do
+      http = agent_http(payload: { "token" => "t", "padding" => "x" * (1 << 20) })
+
+      expect { mint(source(http)) }.to raise_error(Keycardai::OAuth::AgentResponseError, /over 1048576 bytes/)
     end
 
     it "a timeout bounds a request the agent never answers" do

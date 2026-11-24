@@ -39,6 +39,11 @@ module Keycardai
         # would let a header value end the header and start another.
         INVALID_HEADER = /[\r\n\0]/
 
+        # A 2xx response whose body is over MAX_BODY_BYTES. Separate from other
+        # NetworkErrors because the peer did answer, and a caller may classify
+        # that as a bad response rather than a failed connection.
+        class BodyTooLargeError < NetworkError; end
+
         # @return [String]
         attr_reader :socket_path
 
@@ -191,7 +196,7 @@ module Keycardai
         end
 
         def body_too_large
-          NetworkError.new("#{@socket_path} answered with a body over #{MAX_BODY_BYTES} bytes")
+          BodyTooLargeError.new("#{@socket_path} answered with a body over #{MAX_BODY_BYTES} bytes")
         end
 
         # RFC 9112 requires chunked to be the final coding whenever one is sent;

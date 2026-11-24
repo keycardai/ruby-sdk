@@ -29,6 +29,9 @@ module Keycardai
       ISSUE_TOKEN_URL = "http://localhost/keycard.agent.v1.AgentService/IssueToken"
       # Bytes of a non-200 response body parsed for a Connect error.
       ERROR_BODY_LIMIT = 64 * 1024
+      # Largest 200 response body accepted; a longer one is an
+      # AgentResponseError, not parsed from a prefix.
+      BODY_LIMIT = 1 << 20
       # C0 controls and DEL: the token is headed for an Authorization header.
       CONTROL_CHARACTER = /[\x00-\x1f\x7f]/
       # RFC 3339 with up to nine fractional digits, which Time.xmlschema parses
@@ -75,7 +78,8 @@ module Keycardai
       #   is not valid UTF-8, or a default socket that cannot be resolved
       # @raise [NetworkError] the socket cannot be reached; names the path
       # @raise [AgentError] the agent refused
-      # @raise [AgentResponseError] the agent's 200 response is unusable
+      # @raise [AgentResponseError] the agent's 200 response is unusable,
+      #   including a body over 1 MiB
       # @raise [HTTPError] a non-200 response that is not a Connect error
       def resource_token(resource:, scopes: [])
         raise ConfigurationError, "resource is required" if resource.nil? || resource.empty?
@@ -139,8 +143,14 @@ module Keycardai
         client = @http_client || HTTP::UnixSocketClient.new(socket.path)
         client.post_json(ISSUE_TOKEN_URL, request_body(resource, scopes), headers: request_headers,
                                                                           timeout: @timeout)
+      rescue HTTP::UnixSocketClient::BodyTooLargeError
+        raise body_too_large
       rescue NetworkError => e
         raise NetworkError, unreachable_message(socket, e)
+      end
+
+      def body_too_large
+        AgentResponseError.new("Keycard agent response body is over #{BODY_LIMIT} bytes")
       end
 
       def request_body(resource, scopes)
@@ -178,6 +188,8 @@ module Keycardai
       end
 
       def token_from(body)
+        raise body_too_large if body.bytesize > BODY_LIMIT
+
         payload = parse_json(body)
         raise AgentResponseError, "Keycard agent response is not a JSON object" unless payload.is_a?(Hash)
 
