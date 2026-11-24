@@ -11,7 +11,7 @@ reproducible with the commands in the last section.
 | Gems | `keycardai-oauth`, `keycardai-mcp`, `keycardai-a2a` |
 | Capability specs covered | 20 of 23, 2 excluded on purpose, `delegated-access/as-itself` an open gap |
 | Partial coverage | `authorization-code-pkce` rows 8 to 11, 19, and 22 (the stateless web-app begin/complete pair) are unshipped; Ruby covers the flow's building blocks, refresh and the code exchange with a credential, and the loopback `authenticate` |
-| Conformance examples | 464 across the 22 conformance suites (568 examples in all) |
+| Conformance examples | 469 across the 22 conformance suites (573 examples in all) |
 | Live-zone integration rows | 13 of 13 passing against a real zone |
 | A2A delegation checks | 11 of 11 hermetic, plus a live run |
 | MCP server end-to-end checks | 8 of 8 hermetic, against the official `mcp` gem |
@@ -43,7 +43,7 @@ which are labelled without a row number.
 | `application-credentials/workload-identity` | `workload_identity_spec.rb` | 10 |
 | `delegated-access/access-context` | `access_context_spec.rb` | 19 |
 | `delegated-access/impersonation` | `impersonation_spec.rb` | 5 |
-| `delegated-access/local-agent-token-source` | `local_agent_token_source_spec.rb` | 66 (unit rows 19 to 23 cover an SDK-side cache, which Ruby does not keep; integration rows run against a fake agent) |
+| `delegated-access/local-agent-token-source` | `local_agent_token_source_spec.rb` | 71 (unit rows 19 to 23 cover an SDK-side cache, which Ruby does not keep; integration rows run against a fake agent) |
 | `multi-zone-and-ops/multi-zone-support` | `multi_zone_support_spec.rb` | 6 |
 
 ### keycardai-mcp
@@ -190,7 +190,7 @@ contract.
 
 ```sh
 bundle install
-bundle exec rake                      # 568 examples + RuboCop
+bundle exec rake                      # 573 examples + RuboCop
 
 cd examples/mcp-server
 bin/selftest                          # 8 checks, no zone needed
