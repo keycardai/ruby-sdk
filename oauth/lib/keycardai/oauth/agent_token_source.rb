@@ -45,8 +45,9 @@ module Keycardai
       # @param org [String] organization id, for the multi-zone daemon
       # @param zone [String] zone id, set alongside org
       # @param clock [#call] returns the current Time, for +expires_in+
-      # @param timeout [Numeric, nil] bound on each request in seconds; nil, the
-      #   default, waits as long as the human takes to answer the prompt
+      # @param timeout [Numeric, nil] bound in seconds on each request, from the
+      #   dial to the end of the response; nil, the default, waits as long as
+      #   the human takes to answer the prompt
       # @param http_client [#post_json, nil] replaces the connection to the
       #   agent, for tests; when nil each call dials the resolved socket
       def initialize(socket: nil, env: ENV, workload: "", app_id: "", org: "", zone: "",

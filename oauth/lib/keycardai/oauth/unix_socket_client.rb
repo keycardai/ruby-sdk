@@ -15,7 +15,8 @@ module Keycardai
       # interpret.
       #
       # Unlike NetHTTPClient, a request without a timeout waits without bound:
-      # the peer is a local process that may be waiting on a human.
+      # the peer is a local process that may be waiting on a human. A timeout
+      # bounds the whole exchange, the dial and the write included.
       class UnixSocketClient
         # Largest 2xx response body accepted; a longer one is refused, not
         # truncated.
@@ -48,9 +49,9 @@ module Keycardai
 
         # @param url [String]
         # @param headers [Hash{String => String}]
-        # @param timeout [Numeric, nil] seconds to wait for the response, from
-        #   before the dial; nil waits without bound. The dial and the write are
-        #   not themselves interrupted.
+        # @param timeout [Numeric, nil] seconds the whole exchange may take: the
+        #   dial, writing the request, and reading the response. nil waits
+        #   without bound.
         # @return [Response]
         # @raise [NetworkError] when the socket cannot be dialled, the
         #   connection fails, or the timeout passes
@@ -84,10 +85,10 @@ module Keycardai
 
         def perform(method, url, headers, body, timeout)
           request = request_bytes(method, URI(url), headers, body)
-          deadline = timeout && (Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout)
-          socket = dial
+          deadline = timeout && Deadline.after(timeout)
+          socket = dial(deadline)
           begin
-            socket.write(request)
+            deadline ? deadline.write(socket, request) : socket.write(request)
             read_response(Reader.new(socket, deadline))
           ensure
             socket.close
@@ -96,10 +97,10 @@ module Keycardai
           raise NetworkError, "request over #{@socket_path} failed: #{e.message}"
         end
 
-        def dial
-          UNIXSocket.new(@socket_path)
+        def dial(deadline)
+          deadline ? deadline.dial(@socket_path) : UNIXSocket.new(@socket_path)
         rescue ArgumentError => e
-          # UNIXSocket raises ArgumentError for a path longer than sun_path.
+          # Both raise ArgumentError for a path longer than sun_path.
           raise NetworkError, "cannot dial #{@socket_path}: #{e.message}"
         end
 
@@ -231,8 +232,79 @@ module Keycardai
           Integer(digits, 16)
         end
 
-        # Buffered reads from the socket, bounded by an optional monotonic
-        # deadline that covers the whole response.
+        # A monotonic deadline for one exchange, and the dial and write that
+        # it bounds.
+        class Deadline
+          def self.after(seconds)
+            new(Process.clock_gettime(Process::CLOCK_MONOTONIC) + seconds)
+          end
+
+          def initialize(at)
+            @at = at
+          end
+
+          def dial(path)
+            address = Socket.sockaddr_un(path)
+            socket = Socket.new(:UNIX, :STREAM)
+            connect(socket, address)
+            socket
+          rescue StandardError
+            socket&.close
+            raise
+          end
+
+          def write(socket, bytes)
+            until bytes.empty?
+              written = socket.write_nonblock(bytes, exception: false)
+              if written == :wait_writable
+                wait(socket, :wait_writable, "sending the request")
+              else
+                bytes = bytes.byteslice(written..)
+              end
+            end
+          end
+
+          # Waits for +io+ to become readable or writable (+direction+ is
+          # :wait_readable or :wait_writable), and raises once the deadline
+          # passes.
+          def wait(io, direction, doing)
+            return if io.public_send(direction, remaining(doing))
+
+            raise NetworkError, "timed out #{doing}"
+          end
+
+          private
+
+          # A Unix connect waits for room in the peer's listen backlog, not for
+          # an accept. Linux reports a full backlog to a non-blocking connect as
+          # EAGAIN, and polling an unconnected socket says nothing of when room
+          # frees up, so the connect is retried with backoff until the deadline.
+          # macOS refuses the connect outright.
+          def connect(socket, address)
+            backoff = 0.001
+            begin
+              socket.connect_nonblock(address)
+            rescue Errno::EAGAIN
+              sleep([backoff, remaining("connecting")].min)
+              backoff = [backoff * 2, 0.05].min
+              retry
+            rescue IO::WaitWritable
+              wait(socket, :wait_writable, "connecting")
+              retry
+            rescue Errno::EISCONN
+              # The retry after an in-progress connect completed.
+            end
+          end
+
+          def remaining(doing)
+            remaining = @at - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+            remaining.positive? ? remaining : raise(NetworkError, "timed out #{doing}")
+          end
+        end
+        private_constant :Deadline
+
+        # Buffered reads from the socket, bounded by an optional Deadline that
+        # covers the whole exchange.
         class Reader
           CHUNK_BYTES = 16 * 1024
 
@@ -279,12 +351,7 @@ module Keycardai
           end
 
           def wait
-            return unless @deadline
-
-            remaining = @deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
-            return if remaining.positive? && @io.wait_readable(remaining)
-
-            raise NetworkError, "timed out waiting for the response"
+            @deadline&.wait(@io, :wait_readable, "waiting for the response")
           end
         end
         private_constant :Reader

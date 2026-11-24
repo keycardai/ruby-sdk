@@ -69,6 +69,59 @@ RSpec.describe Keycardai::OAuth::HTTP::UnixSocketClient do
     end
   end
 
+  describe "timeout" do
+    def elapsed
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      yield
+      Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+    end
+
+    # Linux makes a connect wait while the listen backlog is full; macOS
+    # refuses it. Either way the dial has to end within the timeout.
+    it "bounds a dial to a peer whose listen backlog is full" do
+      FakeAgent.short_tmpdir do |dir|
+        path = File.join(dir, "peer.sock")
+        address = Socket.sockaddr_un(path)
+        server = Socket.new(:UNIX, :STREAM).tap { |socket| socket.bind(address) && socket.listen(0) }
+        queued = []
+        64.times do
+          queued << Socket.new(:UNIX, :STREAM).tap { |socket| socket.connect_nonblock(address) }
+        rescue Errno::EAGAIN, Errno::ECONNREFUSED
+          break
+        end
+
+        took = elapsed do
+          expect { Timeout.timeout(5) { described_class.new(path).get(url, timeout: 0.2) } }
+            .to raise_error(Keycardai::OAuth::NetworkError)
+        end
+        expect(took).to be < 1
+      ensure
+        queued&.each(&:close)
+        server&.close
+      end
+    end
+
+    it "bounds writing a request the peer never reads" do
+      FakeAgent.short_tmpdir do |dir|
+        path = File.join(dir, "peer.sock")
+        server = UNIXServer.new(path)
+        thread = Thread.new { server.accept.tap { sleep } }
+
+        payload = { "a" => "x" * (8 << 20) }
+
+        took = elapsed do
+          expect { Timeout.timeout(5) { described_class.new(path).post_json(url, payload, timeout: 0.2) } }
+            .to raise_error(Keycardai::OAuth::NetworkError, /timed out sending the request/)
+        end
+        expect(took).to be < 1
+      ensure
+        thread&.kill
+        thread&.join
+        server&.close
+      end
+    end
+  end
+
   describe "response" do
     it "reads a Content-Length body and forces it to UTF-8" do
       body = '{"k":"é"}'.b
