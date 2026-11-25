@@ -9,7 +9,7 @@ module Keycardai
     # HTTP 200 succeeds without a response body, including for unknown,
     # expired, invalid, or already revoked tokens.
     #
-    # @param issuer [String, nil] the zone issuer URL; defaults to metadata.issuer
+    # @param issuer [String, nil] the zone issuer URL; HTTPS is required for discovery
     # @param metadata [AuthorizationServerMetadata, nil] pre-discovered metadata
     # @param token [String] the token to revoke
     # @param token_type_hint [String] the hint sent to the revocation endpoint
@@ -28,8 +28,8 @@ module Keycardai
 
       ClientAuth.validate(credential: credential, client_id: client_id, client_secret: client_secret)
       issuer = revocation_issuer(issuer, metadata)
-      metadata ||= fetch_authorization_server_metadata(issuer, http_client: http_client, timeout: timeout)
-      endpoint = revocation_endpoint(metadata)
+      metadata ||= discover_revocation_metadata(issuer, http_client: http_client, timeout: timeout)
+      endpoint = require_revocation_https(metadata.revocation_endpoint, "revocation_endpoint")
       params = [["token", token], ["token_type_hint", token_type_hint]]
       params, headers = ClientAuth.apply(params, { "Accept" => "application/json" },
                                          issuer: issuer, endpoint: issuer, credential: credential,
@@ -53,15 +53,20 @@ module Keycardai
     end
     private_class_method :same_revocation_issuer?
 
-    def self.revocation_endpoint(metadata)
-      endpoint = metadata.revocation_endpoint
-      uri = URI.parse(endpoint) if endpoint.is_a?(String)
-      return endpoint if uri.is_a?(URI::HTTPS) && !uri.host.to_s.empty?
-
-      raise ConfigurationError, "metadata must provide a revocation_endpoint with an HTTPS URL"
-    rescue URI::InvalidURIError
-      raise ConfigurationError, "metadata must provide a revocation_endpoint with an HTTPS URL"
+    def self.discover_revocation_metadata(issuer, http_client:, timeout:)
+      require_revocation_https(issuer, "issuer")
+      fetch_authorization_server_metadata(issuer, http_client: http_client, timeout: timeout)
     end
-    private_class_method :revocation_endpoint
+    private_class_method :discover_revocation_metadata
+
+    def self.require_revocation_https(url, field)
+      uri = URI.parse(url) if url.is_a?(String)
+      return url if uri.is_a?(URI::HTTPS) && !uri.host.to_s.empty?
+
+      raise ConfigurationError, "#{field} must be an HTTPS URL"
+    rescue URI::InvalidURIError
+      raise ConfigurationError, "#{field} must be an HTTPS URL"
+    end
+    private_class_method :require_revocation_https
   end
 end

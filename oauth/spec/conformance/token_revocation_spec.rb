@@ -193,6 +193,11 @@ RSpec.describe Keycardai::OAuth do
     expect(http.requests).to be_empty
   end
 
+  it "rejects an HTTP issuer before fetching revocation metadata" do
+    expect { revoke("http://zone.test") }.to raise_error(described_class::ConfigurationError)
+    expect(http.requests).to be_empty
+  end
+
   def oauth_error_client(code)
     FakeHTTPClient.new do |url|
       url == discovery_url ? json_response(document) : json_response({ "error" => code }, status: 400)
