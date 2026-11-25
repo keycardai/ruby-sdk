@@ -60,6 +60,7 @@ RSpec.describe Keycardai::OAuth::TokenExchangeClient do
     client(http, client_id: "cid", client_secret: "csecret").exchange_token(subject_token: "at_subject")
 
     expect(token_call(http).headers["Authorization"]).to eq("Basic #{["cid:csecret"].pack("m0")}")
+    expect(token_call(http).params).not_to have_key("client_id")
   end
 
   it "4: client_assertion fields are form-encoded with no Basic header when no secret is configured" do
@@ -94,6 +95,66 @@ RSpec.describe Keycardai::OAuth::TokenExchangeClient do
       "client_id" => "app_123"
     )
     expect(call.headers).not_to have_key("Authorization")
+  end
+
+  it "4b: sends prepared authentication and retains the caller's other fields" do
+    http = token_http
+    resource = "https://api.acme.test"
+    credential = instance_double(Keycardai::OAuth::WorkloadIdentity, authorization_header: nil)
+    expect(credential).to receive(:prepare_token_exchange_request).with(
+      subject_token: "at_subject", resource: resource, token_endpoint: zone.token_url, issuer: zone.issuer
+    ).and_return(
+      "subject_token" => "ignored", "scope" => "ignored", "resource" => "ignored",
+      "client_assertion" => "prepared-jwt", "client_assertion_type" => Keycardai::OAuth::PrivateKeyManager::ASSERTION_TYPE,
+      "client_id" => "prepared-client"
+    )
+
+    client(http, credential: credential).exchange_token(subject_token: "at_subject", resource: resource, scope: "read")
+
+    expect(token_call(http).params).to include(
+      "subject_token" => "at_subject", "scope" => "read", "resource" => resource,
+      "client_assertion" => "prepared-jwt", "client_assertion_type" => Keycardai::OAuth::PrivateKeyManager::ASSERTION_TYPE,
+      "client_id" => "prepared-client"
+    )
+    expect(token_call(http).headers).not_to have_key("Authorization")
+  end
+
+  it "4c: sends caller authentication without preparing an assertion" do
+    http = token_http
+    credential = instance_double(Keycardai::OAuth::WorkloadIdentity, authorization_header: nil)
+    expect(credential).not_to receive(:prepare_token_exchange_request)
+    assertion_type = Keycardai::OAuth::PrivateKeyManager::ASSERTION_TYPE
+
+    client(http, credential: credential).exchange_token(
+      subject_token: "at_subject", client_assertion: "caller-jwt",
+      client_assertion_type: assertion_type, client_id: "caller-client"
+    )
+
+    expect(token_call(http).params).to include(
+      "client_assertion" => "caller-jwt", "client_assertion_type" => assertion_type, "client_id" => "caller-client"
+    )
+    expect(token_call(http).headers).not_to have_key("Authorization")
+  end
+
+  it "4d: surfaces the identity source failure without a token POST" do
+    http = token_http
+    credential = Keycardai::OAuth::WorkloadIdentity.new(source: -> { raise "metadata down" })
+
+    expect { request(client(http, credential: credential)) }
+      .to raise_error(Keycardai::OAuth::WorkloadIdentityRuntimeError, /metadata down/)
+    expect(token_call(http)).to be_nil
+  end
+
+  ["prepared-client", nil].each do |prepared_id|
+    it "4e: uses only the prepared client ID (#{prepared_id.inspect})" do
+      http = token_http
+      credential = Keycardai::OAuth::WorkloadIdentity.new(source: -> { "prepared-jwt" }, client_id: prepared_id)
+
+      client(http, credential: credential).exchange_token(subject_token: "at_subject", client_id: "caller-client")
+
+      expect(token_call(http).params.fetch("client_id", nil)).to eq(prepared_id)
+      expect(token_call(http).params.key?("client_id")).to eq(!prepared_id.nil?)
+    end
   end
 
   it "5: parses a 2xx response into the token result" do
