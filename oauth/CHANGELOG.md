@@ -15,6 +15,13 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.11.0-keycardai-oauth (2026-11-25)
+
+
+- feat(keycardai-oauth): add a read-only WorkloadIdentity#client_id (SDK-146) (#79)
+- Co-authored-by: devin-ai-keycard <devin-ai@keycard.ai>
+Co-authored-by: Larry Osakwe <larry@keycard.ai>
+
 ## 0.10.0-keycardai-oauth (2026-11-25)
 
 
