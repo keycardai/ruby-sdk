@@ -85,10 +85,23 @@ jobs:
         run: gem push "${{ steps.gem.outputs.name }}-${{ steps.gem.outputs.version }}.gem"
 
       - name: Wait for the release to be queryable
-        working-directory: ${{ steps.gem.outputs.dir }}
+        shell: bash
+        env:
+          GEM_NAME: ${{ steps.gem.outputs.name }}
+          GEM_VERSION: ${{ steps.gem.outputs.version }}
         run: |
           # Publishing is asynchronous on rubygems.org. Waiting keeps a green run
-          # from meaning "pushed but not yet installable", which matters because
+          # from meaning "pushed but not yet queryable", which matters because
           # keycardai-mcp and keycardai-a2a depend on keycardai-oauth by version
           # constraint (a gemspec cannot use a path source).
-          gem exec rubygems-await "${{ steps.gem.outputs.name }}-${{ steps.gem.outputs.version }}.gem"
+          deadline=$((SECONDS + 600))
+          while (( SECONDS < deadline )); do
+            if curl -fsS --max-time 10 "https://rubygems.org/api/v1/versions/${GEM_NAME}.json" |
+              jq -e --arg version "$GEM_VERSION" 'any(.[]; .number == $version)' > /dev/null; then
+              echo "$GEM_NAME $GEM_VERSION is queryable on rubygems.org"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::Timed out waiting for $GEM_NAME $GEM_VERSION to be queryable on rubygems.org"
+          exit 1
