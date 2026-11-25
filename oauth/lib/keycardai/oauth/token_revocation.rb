@@ -27,8 +27,7 @@ module Keycardai
       raise ConfigurationError, "token must be a non-empty string" unless token.is_a?(String) && !token.empty?
 
       ClientAuth.validate(credential: credential, client_id: client_id, client_secret: client_secret)
-      issuer = revocation_issuer(issuer, metadata)
-      metadata ||= discover_revocation_metadata(issuer, http_client: http_client, timeout: timeout)
+      metadata, issuer = resolve_revocation_metadata(issuer, metadata, http_client: http_client, timeout: timeout)
       endpoint = require_revocation_https(metadata.revocation_endpoint, "revocation_endpoint")
       params = [["token", token], ["token_type_hint", token_type_hint]]
       params, headers = ClientAuth.apply(params, { "Accept" => "application/json" },
@@ -53,11 +52,15 @@ module Keycardai
     end
     private_class_method :same_revocation_issuer?
 
-    def self.discover_revocation_metadata(issuer, http_client:, timeout:)
+    def self.resolve_revocation_metadata(issuer, metadata, http_client:, timeout:)
+      issuer = revocation_issuer(issuer, metadata)
+      return [metadata, issuer] if metadata
+
       require_revocation_https(issuer, "issuer")
-      fetch_authorization_server_metadata(issuer, http_client: http_client, timeout: timeout)
+      discovered = fetch_authorization_server_metadata(issuer, http_client: http_client, timeout: timeout)
+      [discovered, discovered.issuer]
     end
-    private_class_method :discover_revocation_metadata
+    private_class_method :resolve_revocation_metadata
 
     def self.require_revocation_https(url, field)
       uri = URI.parse(url) if url.is_a?(String)

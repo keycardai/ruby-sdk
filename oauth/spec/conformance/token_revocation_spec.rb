@@ -52,7 +52,7 @@ RSpec.describe Keycardai::OAuth do
         auth.with(headers: { "X-Test-Credential" => issuer })
       end
 
-      revoke(client_id: nil, credential: credential)
+      revoke("#{issuer}/", client_id: nil, credential: credential)
 
       call = http.calls.last
       form = call.params.to_h
