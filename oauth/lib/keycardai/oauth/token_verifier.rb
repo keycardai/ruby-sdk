@@ -84,12 +84,13 @@ module Keycardai
       # @param discovery_ttl [Numeric] jwks_uri cache lifetime in seconds
       # @param fetch_timeout [Numeric] discovery and JWKS fetch timeout
       # @param clock [#call] returns the current Time; override in tests
-      # @raise [ConfigurationError] no trusted issuer
+      # @raise [ConfigurationError] no trusted issuer or explicitly empty audiences
       def initialize(issuers:, audiences: nil, http_client: HTTP::NetHTTPClient.new,
                      key_ttl: JWKSKeyring::DEFAULT_KEY_TTL, discovery_ttl: JWKSKeyring::DEFAULT_DISCOVERY_TTL,
                      fetch_timeout: JWKSKeyring::DEFAULT_FETCH_TIMEOUT, clock: -> { Time.now })
         @issuers = Array(issuers).reject { |issuer| issuer.nil? || issuer.empty? }
         raise ConfigurationError, "TokenVerifier requires at least one trusted issuer" if @issuers.empty?
+        raise ConfigurationError, "audiences must not be empty" if audiences.is_a?(Array) && audiences.empty?
 
         if audiences.nil?
           warn "Keycardai::OAuth::TokenVerifier has no audiences configured, so it accepts a token minted " \

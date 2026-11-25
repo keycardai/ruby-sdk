@@ -35,8 +35,10 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
       end
     end
   end
-  let(:foreign_resource_token) do
-    claims = { "iss" => zone_issuer, "sub" => "usr_123", "aud" => "https://other.example.com",
+  let(:foreign_resource_token) { token_with_audience("https://other.example.com") }
+
+  def token_with_audience(audience)
+    claims = { "iss" => zone_issuer, "sub" => "usr_123", "aud" => audience,
                "exp" => Time.now.to_i + 300, "iat" => Time.now.to_i,
                "client_id" => "client_abc", "scope" => "mcp:tools" }
     JWT.encode(claims, zone_key, "RS256", { "kid" => "kid-1" })
@@ -178,6 +180,26 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
     expect(status).to eq(401)
     expect(headers["www-authenticate"]).to include('error="invalid_token"')
     expect(probe.ran?).to be(false)
+  end
+
+  [
+    ["8a: a scalar audience matches the second configured value", "resource-b", 200],
+    ["8b: a scalar audience without a match is 401 invalid_token", "resource-c", 401],
+    ["8c: an array audience with one match proceeds", %w[resource-c resource-b], 200],
+    ["8d: an array audience without a match is 401 invalid_token", %w[resource-c resource-d], 401]
+  ].each do |description, audience, expected_status|
+    it description do
+      gated = described_class.new(probe, verifier: real_verifier(audiences: %w[resource-a resource-b]))
+      token = token_with_audience(audience)
+      status, headers, = gated.call(rack_env(headers: { "Authorization" => "Bearer #{token}" }))
+
+      expect(status).to eq(expected_status)
+      expect(headers["www-authenticate"]).to include('error="invalid_token"') if expected_status == 401
+    end
+  end
+
+  it "8e: explicitly empty audiences raise at construction" do
+    expect { real_verifier(audiences: []) }.to raise_error(Keycardai::OAuth::ConfigurationError, /audiences/)
   end
 
   # Infrastructure failures: the zone's keys or metadata could not be fetched,
