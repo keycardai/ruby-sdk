@@ -2,6 +2,6 @@
 
 module Keycardai
   module OAuth
-    VERSION = "0.11.4"
+    VERSION = "0.12.0"
   end
 end
