@@ -32,7 +32,8 @@ which are labelled without a row number.
 | --- | --- | --- |
 | `jwt-jwks/jwt-signing-and-verification` | `jwt_signing_and_verification_spec.rb` | 18 |
 | `jwt-jwks/jwks-caching` | `jwks_caching_spec.rb` | 11 |
-| `oauth-client/authorization-server-discovery` | `authorization_server_discovery_spec.rb` | 9 |
+| `oauth-client/authorization-server-discovery` | `authorization_server_discovery_spec.rb` | 11 |
+| `oauth-client/token-revocation` | `token_revocation_spec.rb` | 15 |
 | `oauth-client/userinfo` | `userinfo_spec.rb` | 8 |
 | `oauth-client/client-credentials` | `client_credentials_spec.rb` | 9 |
 | `oauth-client/token-exchange` | `token_exchange_spec.rb` | 11 |
