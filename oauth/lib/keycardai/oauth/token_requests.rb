@@ -64,7 +64,7 @@ module Keycardai
       private
 
       def initialize_token_client(issuer:, credential:, client_id:, client_secret:, http_client:, timeout:,
-                                  discovery_ttl: DEFAULT_DISCOVERY_TTL, clock: -> { Time.now })
+                                  discovery_ttl: DEFAULT_DISCOVERY_TTL, clock: MetadataRetry::WALL_CLOCK)
         validate_client_auth(credential, client_id, client_secret)
 
         @issuer = issuer

@@ -35,7 +35,9 @@ module Keycardai
         end
 
         def retry_after
-          entry = headers.find { |name, _| name.casecmp?("Retry-After") }
+          return unless headers.respond_to?(:find)
+
+          entry = headers.find { |name, _| name.to_s.casecmp?("Retry-After") }
           Array(entry&.last).first
         end
       end

@@ -152,7 +152,7 @@ module Keycardai
       #   sleep that does not respond to call, a timeout that is not
       #   positive, or a negative discovery_ttl
       def initialize(issuer: nil, metadata: nil, credential: nil, client_id: nil,
-                     http_client: HTTP::NetHTTPClient.new, timeout: nil, clock: -> { Time.now },
+                     http_client: HTTP::NetHTTPClient.new, timeout: nil, clock: MetadataRetry::WALL_CLOCK,
                      sleep: ->(seconds) { Kernel.sleep(seconds) },
                      discovery_ttl: TokenRequests::DEFAULT_DISCOVERY_TTL)
         ClientAuth.validate(credential: credential, client_id: client_id)

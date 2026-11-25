@@ -51,6 +51,71 @@ RSpec.describe "Base metadata caching" do
     expect(client.request_token.access_token).to eq("at")
   end
 
+  it "2: rejects invalid Retry-After dates, including normalized calendar dates" do
+    day = clock.call + 5
+    [
+      day.strftime("%a, %d %b %Y %H:%M GMT"),
+      "#{day.httpdate} junk",
+      day.strftime("%a, 32 %b %Y %T GMT")
+    ].each do |header|
+      client, http = subject_with(unavailable(429, header))
+      expect { client.request_token }.to raise_error(Keycardai::OAuth::HTTPError)
+      expect(client.request_token.access_token).to eq("at")
+      expect(http.request_count(zone.metadata_url)).to eq(2)
+    end
+  end
+
+  it "2: accepts space- and zero-padded asctime day numbers" do
+    time = Time.utc(2024, 11, 6, 12)
+    retry_state = Keycardai::OAuth.const_get(:MetadataRetry).new(-> { time })
+    ["Wed Nov  6 12:00:05 2024", "Wed Nov 06 12:00:05 2024"].each_with_index do |header, issuer|
+      error = Keycardai::OAuth::HTTPError.new("unavailable", status: 429, retry_after: header)
+      expect { retry_state.fetch(issuer) { raise error } }.to raise_error(Keycardai::OAuth::HTTPError)
+      expect { retry_state.fetch(issuer) { flunk("unexpected fetch") } }.to raise_error(Keycardai::OAuth::HTTPError)
+    end
+  end
+
+  it "2: reads Retry-After defensively from unsupported or symbol-keyed headers" do
+    response = Keycardai::OAuth::HTTP::Response
+    expect(response.new(status: 429, headers: nil, body: "").retry_after).to be_nil
+    expect(response.new(status: 429, headers: { "Retry-After": ["5"] }, body: "").retry_after).to eq("5")
+  end
+
+  it "3: uses monotonic deadlines, independent of later wall time changes" do
+    ticks = 0
+    retry_state = Keycardai::OAuth.const_get(:MetadataRetry).new(clock, monotonic_clock: -> { ticks })
+    error = Keycardai::OAuth::HTTPError.new("unavailable", status: 503, retry_after: (clock.call + 5).httpdate)
+    expect { retry_state.fetch(:issuer) { raise error } }.to raise_error(Keycardai::OAuth::HTTPError)
+    clock.sleep(3600)
+    expect { retry_state.fetch(:issuer) { flunk("unexpected fetch") } }.to raise_error(Keycardai::OAuth::HTTPError)
+    ticks = 5
+    expect(retry_state.fetch(:issuer) { ticks * 2 }).to eq(10)
+  end
+
+  it "3: bounds shared retry state and ignores a failure after concurrent invalidation" do
+    retry_state = Keycardai::OAuth.const_get(:MetadataRetry).new(clock)
+    error = Keycardai::OAuth::NetworkError.new("unavailable")
+    129.times { |i| expect { retry_state.fetch(i) { raise error } }.to raise_error(Keycardai::OAuth::NetworkError) }
+    expect { retry_state.fetch(128) { flunk("unexpected fetch") } }.to raise_error(Keycardai::OAuth::NetworkError)
+    expect(retry_state.fetch(0) { clock.call }).to eq(clock.call)
+    entered = Queue.new
+    release = Queue.new
+    worker = Thread.new do
+      retry_state.fetch(:issuer) do
+        entered << true
+        release.pop
+        raise error
+      end
+    rescue Keycardai::OAuth::NetworkError => e
+      e
+    end
+    entered.pop
+    retry_state.clear
+    release << true
+    expect(worker.value).to equal(error)
+    expect(retry_state.fetch(:issuer) { clock.call }).to eq(clock.call)
+  end
+
   it "4: a successful fetch resets the backoff for the next refresh" do
     client, = subject_with(network_error, network_error, nil, network_error)
     [1.2, 2.4].each do |delay|

@@ -36,7 +36,7 @@ module Keycardai
       # @param clock [#call] returns the current Time; override in tests
       def initialize(http_client: HTTP::NetHTTPClient.new, key_ttl: DEFAULT_KEY_TTL,
                      discovery_ttl: DEFAULT_DISCOVERY_TTL, fetch_timeout: DEFAULT_FETCH_TIMEOUT,
-                     refetch_cooldown: DEFAULT_REFETCH_COOLDOWN, clock: -> { Time.now })
+                     refetch_cooldown: DEFAULT_REFETCH_COOLDOWN, clock: MetadataRetry::WALL_CLOCK)
         @http_client = http_client
         @key_ttl = key_ttl
         @discovery_ttl = discovery_ttl
