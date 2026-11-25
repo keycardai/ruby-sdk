@@ -11,6 +11,8 @@ module Keycardai
     #
     # Holds no shared secret and contributes no Basic header.
     class WorkloadIdentity
+      attr_reader :client_id
+
       # @param source [#identity_token, #call] supplies the platform-signed
       #   OIDC token; a bare callable is accepted
       # @param client_id [String, nil] public ID of the Keycard application
