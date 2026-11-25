@@ -222,6 +222,13 @@ RSpec.describe Keycardai::OAuth::TokenExchangeClient do
       .to raise_error(ArgumentError, /actor_token_type/)
   end
 
+  it "requires client_assertion_type when client_assertion is set" do
+    http = token_http
+    expect { client(http).exchange_token(subject_token: "at", client_assertion: "jwt") }
+      .to raise_error(ArgumentError, /client_assertion_type/)
+    expect(http.request_count(zone.token_url)).to eq(0)
+  end
+
   it "requires client_id and client_secret together" do
     expect { client(token_http, client_id: "cid") }
       .to raise_error(Keycardai::OAuth::ConfigurationError)

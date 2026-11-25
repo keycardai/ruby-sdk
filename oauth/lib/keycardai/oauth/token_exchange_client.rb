@@ -46,10 +46,12 @@ module Keycardai
       #   delegation; requires actor_token_type
       # @param actor_token_type [String, nil]
       # @param client_assertion [String, nil] client-authentication assertion,
-      #   form-encoded in the body
+      #   form-encoded in the body; requires client_assertion_type
       # @param client_assertion_type [String, nil]
       # @param client_id [String, nil] the application credential the
-      #   assertion authenticates as, form-encoded beside client_assertion
+      #   assertion authenticates as, form-encoded beside client_assertion.
+      #   When the credential prepares the assertion, its ID replaces this
+      #   value, or the field is omitted if the credential supplies no ID.
       # @param issuer [String, nil] per-call zone selection: resolves the zone's
       #   token endpoint and, for a multi-zone credential, that zone's client
       #   authentication. Defaults to the client's issuer.
@@ -62,6 +64,8 @@ module Keycardai
                          actor_token_type: nil, client_assertion: nil, client_assertion_type: nil,
                          client_id: nil, issuer: nil)
         raise ArgumentError, "actor_token_type is required when actor_token is set" if actor_token && !actor_token_type
+
+        validate_client_assertion(client_assertion, client_assertion_type)
 
         overrides = {
           "subject_token_type" => subject_token_type,
@@ -103,6 +107,10 @@ module Keycardai
       end
 
       private
+
+      def validate_client_assertion(assertion, type)
+        raise ArgumentError, "client_assertion_type is required when client_assertion is set" if assertion && !type
+      end
 
       def post_exchange(subject_token, overrides, issuer)
         params = { "grant_type" => GrantType::TOKEN_EXCHANGE, "subject_token" => subject_token,
