@@ -14,6 +14,8 @@ module Keycardai
     # Holds no shared secret and contributes no Basic header. Never reads
     # environment variables; the caller supplies storage configuration.
     class WebIdentity
+      include PrintedForm
+
       # @param client_id [String, nil] the registered OAuth client id, signed
       #   as the assertion's iss and sub; required for client authentication
       # @param server_name [String, nil] sanitized into the key id when no
@@ -36,6 +38,13 @@ module Keycardai
       # @return [String] the key id used as the assertion's kid
       def key_id
         @key_manager.key_id
+      end
+
+      # Shows the client ID and the key ID. Never shows the private key.
+      #
+      # @return [String]
+      def inspect
+        "#<#{self.class} client_id=#{@client_id.inspect}, key_id=#{key_id.inspect}>"
       end
 
       # Assertion-based authentication contributes no Basic header.
@@ -63,14 +72,9 @@ module Keycardai
           raise ConfigurationError, "WebIdentity requires the token_endpoint as the assertion audience"
         end
 
-        {
-          "grant_type" => GrantType::TOKEN_EXCHANGE,
-          "subject_token" => subject_token,
-          "subject_token_type" => TokenType::ACCESS_TOKEN,
-          "resource" => resource,
-          "audience" => audience,
-          "scope" => scope
-        }.compact.merge(client_authentication(issuer: issuer, endpoint: token_endpoint).params)
+        authentication = client_authentication(issuer: issuer, endpoint: token_endpoint)
+        TokenExchangeForm.build(subject_token: subject_token, resource: resource, audience: audience, scope: scope,
+                                authentication: authentication.params)
       end
 
       # Client authentication for one request: a newly signed client assertion

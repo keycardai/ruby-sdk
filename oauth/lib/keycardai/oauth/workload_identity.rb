@@ -11,6 +11,8 @@ module Keycardai
     #
     # Holds no shared secret and contributes no Basic header.
     class WorkloadIdentity
+      include PrintedForm
+
       attr_reader :client_id
 
       # @param source [#identity_token, #call] supplies the platform-signed
@@ -24,6 +26,13 @@ module Keycardai
       def initialize(source:, client_id: nil)
         @source = normalize_source(source)
         @client_id = client_id
+      end
+
+      # Shows the client ID and the source's class.
+      #
+      # @return [String]
+      def inspect
+        "#<#{self.class} client_id=#{@client_id.inspect}, source=#{PrintedForm.type_of(@source)}>"
       end
 
       # Assertion-based authentication contributes no Basic header.
@@ -47,14 +56,9 @@ module Keycardai
       # @raise [WorkloadIdentityRuntimeError] the source failed to produce a token
       def prepare_token_exchange_request(subject_token:, resource: nil, audience: nil, scope: nil,
                                          token_endpoint: nil, issuer: nil)
-        {
-          "grant_type" => GrantType::TOKEN_EXCHANGE,
-          "subject_token" => subject_token,
-          "subject_token_type" => TokenType::ACCESS_TOKEN,
-          "resource" => resource,
-          "audience" => audience,
-          "scope" => scope
-        }.compact.merge(client_authentication(issuer: issuer, endpoint: token_endpoint).params)
+        authentication = client_authentication(issuer: issuer, endpoint: token_endpoint)
+        TokenExchangeForm.build(subject_token: subject_token, resource: resource, audience: audience, scope: scope,
+                                authentication: authentication.params)
       end
 
       # Client authentication for one request, as form fields: the source's

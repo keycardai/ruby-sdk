@@ -200,13 +200,15 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
       { method: :to_s, suffix: "" },
       { method: :pretty_inspect, suffix: "\n" }
     ].each do |example|
-      it "#{example[:method]} leaves out device_code" do
+      it "38: #{example[:method]} leaves out device_code and shows the other fields" do
         expect(authorization.public_send(example[:method])).to eq(shown + example[:suffix])
       end
     end
 
-    it "keeps device_code in to_h, so a stored authorization can poll" do
+    it "38: keeps device_code in to_h and JSON, so a stored authorization can poll" do
       expect(authorization.to_h[:device_code]).to eq("dc_123")
+      expect(JSON.parse(authorization.to_json)).to include("device_code" => "dc_123")
+      expect(JSON.parse(JSON.generate(authorization))).to include("device_code" => "dc_123")
     end
   end
 
