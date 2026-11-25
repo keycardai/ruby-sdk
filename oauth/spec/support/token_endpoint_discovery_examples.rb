@@ -12,17 +12,21 @@ RSpec.shared_examples "token-endpoint discovery is not sticky" do |rows| # ruboc
     end
   end
 
-  it "#{rows[0]}: a network error during discovery caches nothing; the next call discovers again and succeeds" do
+  it "#{rows[0]}: a network error during discovery paces later discovery calls" do
     attempts = 0
+    now = Time.at(1_700_000_000)
     http = discovery_http do
       attempts += 1
       raise Keycardai::OAuth::NetworkError, "connection refused" if attempts == 1
 
       json_response(zone.metadata)
     end
-    subject = client(http)
+    subject = client(http, clock: -> { now })
 
     expect { request(subject) }.to raise_error(Keycardai::OAuth::NetworkError)
+    expect { request(subject) }.to raise_error(Keycardai::OAuth::NetworkError)
+    expect(http.request_count(zone.metadata_url)).to eq(1)
+    now += 1.2
     expect(request(subject).access_token).to eq(token_payload["access_token"])
     expect(http.request_count(zone.metadata_url)).to eq(2)
   end

@@ -419,6 +419,7 @@ module Keycardai
         @ttl = ttl
         @discovered = nil
         @discovered_at = nil
+        @retry = MetadataRetry.new(@clock)
         @mutex = Mutex.new
       end
 
@@ -451,7 +452,9 @@ module Keycardai
         @mutex.synchronize do
           return @discovered if @discovered && @clock.call - @discovered_at <= @ttl
 
-          fetched = OAuth.fetch_authorization_server_metadata(@issuer, http_client: @http_client, timeout: @timeout)
+          fetched = @retry.fetch(@issuer) do
+            OAuth.fetch_authorization_server_metadata(@issuer, http_client: @http_client, timeout: @timeout)
+          end
           if ENDPOINTS.all? { |name| http_url?(fetched.public_send(name)) }
             @discovered = fetched
             @discovered_at = @clock.call

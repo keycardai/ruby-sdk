@@ -33,6 +33,11 @@ module Keycardai
         def success?
           (200..299).cover?(status)
         end
+
+        def retry_after
+          entry = headers.find { |name, _| name.casecmp?("Retry-After") }
+          Array(entry&.last).first
+        end
       end
 
       # Build an HTTP Basic Authorization header value (RFC 7617) for client

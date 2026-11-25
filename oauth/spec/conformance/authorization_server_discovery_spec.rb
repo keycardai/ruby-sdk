@@ -9,6 +9,23 @@ RSpec.describe "Authorization server discovery" do
     Keycardai::OAuth.fetch_authorization_server_metadata(zone.issuer, http_client: http)
   end
 
+  it "11: only cache-backed discovery paces later fetches" do
+    clock = FakeClock.new
+    responses = [
+      Keycardai::OAuth::HTTP::Response.new(status: 503, headers: { "Retry-After" => ["5"] }, body: "{}"),
+      json_response(zone.metadata), json_response(zone.metadata)
+    ]
+    http = zone.http_client(zone.metadata_url => -> { responses.shift })
+    ring = Keycardai::OAuth::JWKSKeyring.new(http_client: http, clock: clock)
+
+    expect { ring.key(zone.issuer, "kid-1") }.to raise_error(Keycardai::OAuth::JWKSDiscoveryError)
+    expect { ring.key(zone.issuer, "kid-1") }.to raise_error(Keycardai::OAuth::JWKSDiscoveryError)
+    expect(http.request_count(zone.metadata_url)).to eq(1)
+    expect(discover(http).issuer).to eq(zone.issuer)
+    clock.sleep(5)
+    expect(ring.key(zone.issuer, "kid-1")).not_to be_nil
+  end
+
   it "1: returns metadata with issuer and endpoint fields for a well-formed document" do
     metadata = discover(zone.http_client)
 

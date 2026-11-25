@@ -53,7 +53,7 @@ module Keycardai
       response = http_client.get(url, headers: { "Accept" => "application/json" }, timeout: timeout)
       unless response.success?
         raise HTTPError.new("discovery for #{issuer} returned HTTP #{response.status}",
-                            status: response.status, body: response.body)
+                            status: response.status, body: response.body, retry_after: response.retry_after)
       end
 
       Discovery.parse_metadata(issuer, response.body)
