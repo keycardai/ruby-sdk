@@ -28,7 +28,7 @@ module Keycardai
       #   given, or a credential is combined with a raw pair
       def initialize(issuer:, credential: nil, client_id: nil, client_secret: nil,
                      http_client: HTTP::NetHTTPClient.new, timeout: nil,
-                     discovery_ttl: TokenRequests::DEFAULT_DISCOVERY_TTL, clock: -> { Time.now })
+                     discovery_ttl: TokenRequests::DEFAULT_DISCOVERY_TTL, clock: MetadataRetry::WALL_CLOCK)
         initialize_token_client(issuer: issuer, credential: credential, client_id: client_id,
                                 client_secret: client_secret, http_client: http_client, timeout: timeout,
                                 discovery_ttl: discovery_ttl, clock: clock)

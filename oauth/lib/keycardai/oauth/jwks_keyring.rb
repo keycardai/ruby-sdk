@@ -36,7 +36,7 @@ module Keycardai
       # @param clock [#call] returns the current Time; override in tests
       def initialize(http_client: HTTP::NetHTTPClient.new, key_ttl: DEFAULT_KEY_TTL,
                      discovery_ttl: DEFAULT_DISCOVERY_TTL, fetch_timeout: DEFAULT_FETCH_TIMEOUT,
-                     refetch_cooldown: DEFAULT_REFETCH_COOLDOWN, clock: -> { Time.now })
+                     refetch_cooldown: DEFAULT_REFETCH_COOLDOWN, clock: MetadataRetry::WALL_CLOCK)
         @http_client = http_client
         @key_ttl = key_ttl
         @discovery_ttl = discovery_ttl
@@ -46,6 +46,9 @@ module Keycardai
         @keys = {}
         @discovery = {}
         @key_sets = {} # jwks_uri => { keys:, fetched_at: }
+        @discovery_retry = MetadataRetry.new(@clock)
+        @jwks_retry = MetadataRetry.new(@clock)
+        @jwks_locks = {}
         @issuer_locks = {}
         @mutex = Mutex.new
       end
@@ -79,10 +82,14 @@ module Keycardai
             @keys.delete_if { |(cached_issuer, _), _| cached_issuer == issuer }
             entry = @discovery.delete(issuer)
             @key_sets.delete(entry[:jwks_uri]) if entry
+            @discovery_retry.delete(issuer)
+            @jwks_retry.delete(entry[:jwks_uri]) if entry
           else
             @keys.clear
             @discovery.clear
             @key_sets.clear
+            @discovery_retry.clear
+            @jwks_retry.clear
           end
         end
       end
@@ -122,9 +129,17 @@ module Keycardai
           raise_not_found(issuer, kid) if now - cached[:fetched_at] < @refetch_cooldown
         end
 
-        keys = fetch_jwks(jwks_uri)
-        @mutex.synchronize { @key_sets[jwks_uri] = { keys: keys, fetched_at: now } }
+        keys = refresh_jwks(jwks_uri)
         keys.find { |candidate| candidate["kid"] == kid } || raise_not_found(issuer, kid)
+      end
+
+      def refresh_jwks(jwks_uri)
+        lock = @mutex.synchronize { @jwks_locks[jwks_uri] ||= Mutex.new }
+        lock.synchronize do
+          @jwks_retry.fetch(jwks_uri) { fetch_jwks(jwks_uri) }.tap do |fetched|
+            @mutex.synchronize { @key_sets[jwks_uri] = { keys: fetched, fetched_at: now } }
+          end
+        end
       end
 
       def fresh_key_set(jwks_uri)
@@ -145,8 +160,9 @@ module Keycardai
         end
         return cached if cached
 
-        jwks_uri = discover_jwks_uri(issuer)
-        assert_same_origin(issuer, jwks_uri)
+        jwks_uri = @discovery_retry.fetch(issuer) do
+          discover_jwks_uri(issuer).tap { |uri| assert_same_origin(issuer, uri) }
+        end
         @mutex.synchronize { @discovery[issuer] = { jwks_uri: jwks_uri, fetched_at: now } }
         jwks_uri
       end
@@ -170,12 +186,8 @@ module Keycardai
       end
 
       def fetch_jwks(jwks_uri)
-        response = begin
-          @http_client.get(jwks_uri, headers: { "Accept" => "application/json" }, timeout: @fetch_timeout)
-        rescue NetworkError, ResponseBodyTooLargeError => e
-          raise JWKSFetchError, "JWKS fetch from #{jwks_uri} failed: #{e.message}"
-        end
-        raise JWKSFetchError, "JWKS fetch from #{jwks_uri} returned HTTP #{response.status}" unless response.success?
+        response = @http_client.get(jwks_uri, headers: { "Accept" => "application/json" }, timeout: @fetch_timeout)
+        raise_jwks_http_error(jwks_uri, response) unless response.success?
 
         document = begin
           JSON.parse(response.body)
@@ -183,6 +195,14 @@ module Keycardai
           raise JWKSFetchError, "JWKS from #{jwks_uri} is invalid JSON"
         end
         document["keys"] || raise(JWKSFetchError, "JWKS from #{jwks_uri} has no keys field")
+      rescue NetworkError, ResponseBodyTooLargeError => e
+        raise JWKSFetchError, "JWKS fetch from #{jwks_uri} failed: #{e.message}"
+      end
+
+      def raise_jwks_http_error(jwks_uri, response)
+        error = HTTPError.new("JWKS endpoint returned HTTP #{response.status}",
+                              status: response.status, retry_after: response.retry_after)
+        raise JWKSFetchError, "JWKS fetch from #{jwks_uri} returned HTTP #{response.status}", cause: error
       end
 
       def import_key(jwk)

@@ -94,6 +94,42 @@ RSpec.describe Keycardai::OAuth::JWKSKeyring do
     expect(http.request_count(zone.jwks_url)).to eq(1)
   end
 
+  [
+    [10, :jwks_url, Keycardai::OAuth::JWKSFetchError],
+    [11, :metadata_url, Keycardai::OAuth::JWKSDiscoveryError]
+  ].each do |row, route, error|
+    it "#{row}: paces fetches after a network error" do
+      url = zone.public_send(route)
+      replies = [-> { raise Keycardai::OAuth::NetworkError, "connection refused" },
+                 -> { json_response(route == :jwks_url ? zone.jwks : zone.metadata) }]
+      http = zone.http_client(url => -> { replies.shift.call })
+      ring = keyring(http)
+
+      expect { ring.key(zone.issuer, "kid-1") }.to raise_error(error)
+      expect { ring.key(zone.issuer, "kid-1") }.to raise_error(error)
+      expect(http.request_count(url)).to eq(1)
+      clock_time[:now] += 1.2
+      expect(ring.key(zone.issuer, "kid-1")).not_to be_nil
+      expect(http.request_count(url)).to eq(2)
+    end
+  end
+
+  it "20: caps Retry-After at 60 seconds across kids" do
+    zone = ZoneFixture.new(kids: %w[kid-1 kid-2])
+    throttle = Keycardai::OAuth::HTTP::Response.new(status: 429, headers: { "Retry-After" => ["120"] }, body: "{}")
+    replies = [throttle, json_response(zone.jwks)]
+    http = zone.http_client(zone.jwks_url => -> { replies.shift })
+    ring = keyring(http)
+
+    expect { ring.key(zone.issuer, "kid-1") }.to raise_error(Keycardai::OAuth::JWKSFetchError)
+    clock_time[:now] += 59
+    expect { ring.key(zone.issuer, "kid-2") }.to raise_error(Keycardai::OAuth::JWKSFetchError)
+    expect(http.request_count(zone.jwks_url)).to eq(1)
+    clock_time[:now] += 1
+    expect(ring.key(zone.issuer, "kid-2")).not_to be_nil
+    expect(http.request_count(zone.jwks_url)).to eq(2)
+  end
+
   # Rows 14 to 19 (SDK-93): the per-jwks_uri key set and the refetch cooldown.
   it "14: distinct unknown kids within the cooldown cause one JWKS fetch" do
     http = zone.http_client

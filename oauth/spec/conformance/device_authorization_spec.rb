@@ -358,13 +358,16 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
     end
 
     [
-      { name: "a 503", response: -> { json_response({}, status: 503) },
+      { name: "a 503 with Retry-After",
+        response: lambda {
+          Keycardai::OAuth::HTTP::Response.new(status: 503, headers: { "Retry-After" => ["5"] }, body: "{}")
+        },
         error: Keycardai::OAuth::HTTPError, message: "discovery for https://acme.test returned HTTP 503" },
       { name: "a network error",
         response: -> { raise Keycardai::OAuth::NetworkError, "request to acme.test failed: Errno::ECONNREFUSED" },
         error: Keycardai::OAuth::NetworkError, message: "request to acme.test failed: Errno::ECONNREFUSED" }
     ].each do |example|
-      it "raises a discovery failure from #{example[:name]} as is, and the next call fetches again" do
+      it "37: paces discovery after #{example[:name]}" do
         responses = [example[:response], -> { json_response(zone.metadata(device: true)) }]
         http = FakeHTTPClient.new do |url, _params|
           url == zone.metadata_url ? instance_exec(&responses.shift) : json_response(device_payload)
@@ -372,6 +375,10 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
         device = client(http)
 
         expect { device.request_device_authorization }.to raise_error(example[:error], example[:message])
+        clock.sleep(0.5)
+        expect { device.request_device_authorization }.to raise_error(example[:error], example[:message])
+        expect(http.requests).to eq([zone.metadata_url])
+        clock.sleep(4.5)
         device.request_device_authorization
 
         expect(http.requests).to eq([zone.metadata_url, zone.metadata_url, device_url])

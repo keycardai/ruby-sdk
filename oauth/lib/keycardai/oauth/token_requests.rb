@@ -64,7 +64,7 @@ module Keycardai
       private
 
       def initialize_token_client(issuer:, credential:, client_id:, client_secret:, http_client:, timeout:,
-                                  discovery_ttl: DEFAULT_DISCOVERY_TTL, clock: -> { Time.now })
+                                  discovery_ttl: DEFAULT_DISCOVERY_TTL, clock: MetadataRetry::WALL_CLOCK)
         validate_client_auth(credential, client_id, client_secret)
 
         @issuer = issuer
@@ -74,6 +74,7 @@ module Keycardai
         @discovery_ttl = discovery_ttl
         @clock = clock
         @token_endpoints = {}
+        @token_endpoint_retry = MetadataRetry.new(@clock)
         @token_endpoint_mutex = Mutex.new
       end
 
@@ -88,13 +89,11 @@ module Keycardai
 
       # Discover a zone's token endpoint and cache it for discovery_ttl, keyed
       # by issuer so multi-zone clients never reuse another zone's endpoint.
-      # Only a success is recorded: a failed discovery raises to its caller and
-      # the next call discovers again. The mutex serializes cold-cache callers
-      # so concurrent first calls perform a single fetch; an interrupted caller
-      # releases it and leaves nothing behind for the others.
+      # Transient failures pace subsequent fetches. The mutex serializes
+      # cold-cache callers.
       def token_endpoint(issuer = @issuer)
         @token_endpoint_mutex.synchronize do
-          fresh_token_endpoint(issuer) || discover_token_endpoint(issuer)
+          fresh_token_endpoint(issuer) || @token_endpoint_retry.fetch(issuer) { discover_token_endpoint(issuer) }
         end
       end
 

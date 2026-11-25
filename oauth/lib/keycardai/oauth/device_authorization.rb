@@ -152,7 +152,7 @@ module Keycardai
       #   sleep that does not respond to call, a timeout that is not
       #   positive, or a negative discovery_ttl
       def initialize(issuer: nil, metadata: nil, credential: nil, client_id: nil,
-                     http_client: HTTP::NetHTTPClient.new, timeout: nil, clock: -> { Time.now },
+                     http_client: HTTP::NetHTTPClient.new, timeout: nil, clock: MetadataRetry::WALL_CLOCK,
                      sleep: ->(seconds) { Kernel.sleep(seconds) },
                      discovery_ttl: TokenRequests::DEFAULT_DISCOVERY_TTL)
         ClientAuth.validate(credential: credential, client_id: client_id)
@@ -419,6 +419,7 @@ module Keycardai
         @ttl = ttl
         @discovered = nil
         @discovered_at = nil
+        @retry = MetadataRetry.new(@clock)
         @mutex = Mutex.new
       end
 
@@ -451,7 +452,9 @@ module Keycardai
         @mutex.synchronize do
           return @discovered if @discovered && @clock.call - @discovered_at <= @ttl
 
-          fetched = OAuth.fetch_authorization_server_metadata(@issuer, http_client: @http_client, timeout: @timeout)
+          fetched = @retry.fetch(@issuer) do
+            OAuth.fetch_authorization_server_metadata(@issuer, http_client: @http_client, timeout: @timeout)
+          end
           if ENDPOINTS.all? { |name| http_url?(fetched.public_send(name)) }
             @discovered = fetched
             @discovered_at = @clock.call

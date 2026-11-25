@@ -20,11 +20,13 @@ module Keycardai
       attr_reader :status
       # @return [String]
       attr_reader :body
+      attr_reader :retry_after
 
-      def initialize(message, status:, body: "")
+      def initialize(message, status:, body: "", retry_after: nil)
         super(message)
         @status = status
         @body = body
+        @retry_after = retry_after
       end
     end
 
