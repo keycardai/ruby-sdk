@@ -8,11 +8,19 @@ module Keycardai
   module OAuth
     # Invalid configuration detected at construction time: missing credential,
     # empty issuer list, an algorithm the verifier does not implement.
-    class ConfigurationError < Keycardai::Error; end
+    class ConfigurationError < Keycardai::Error
+      def retryable?
+        false
+      end
+    end
 
     # A transport-level failure (DNS, TLS, timeout) wrapping the underlying
     # exception as +cause+.
-    class NetworkError < Keycardai::Error; end
+    class NetworkError < Keycardai::Error
+      def retryable?
+        true
+      end
+    end
 
     # A non-2xx HTTP response. Has the status code and response body.
     class HTTPError < Keycardai::Error
@@ -27,6 +35,11 @@ module Keycardai
         @status = status
         @body = body
         @retry_after = retry_after
+      end
+
+      # @return [Boolean] whether repeating the request unchanged could succeed
+      def retryable?
+        status == 429 || (500..599).cover?(status)
       end
     end
 
@@ -54,7 +67,7 @@ module Keycardai
 
       # @return [Boolean] whether repeating the request unchanged could succeed
       def retryable?
-        status == 429 || status.to_i >= 500 || !PERMANENT_ERROR_CODES.include?(error)
+        super || !PERMANENT_ERROR_CODES.include?(error)
       end
     end
 

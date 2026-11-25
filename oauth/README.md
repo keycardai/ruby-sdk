@@ -17,6 +17,7 @@ Capabilities:
 - Client credentials grant (RFC 6749 §4.4)
 - Authorization code + PKCE, including the challenge-driven loopback flow (RFC 8252)
 - Device authorization grant (RFC 8628)
+- Token revocation (RFC 7009)
 - Dynamic client registration (RFC 7591)
 - Authorization server discovery (RFC 8414), including the OIDC Discovery 1.0 §3 endpoints
 - UserInfo: the signed-in user's identity claims (OIDC Core 1.0 §5.3)
@@ -131,6 +132,25 @@ here. A `WorkloadIdentity` needs `client_id:` (the public ID of a v2 token
 credential) for refresh, the code exchange, `authenticate` and device
 authorization; without it these raise `ConfigurationError` before any request.
 A credential of your own must respond to `client_authentication`.
+
+### Revoke a token
+
+Revoking a Keycard refresh token revokes its session. Use the same client
+authentication as for refresh: a public client ID, client ID and secret, or
+`credential:`.
+
+```ruby
+Keycardai::OAuth.revoke_token(
+  "https://your-zone.keycard.cloud",
+  token: stored_refresh_token,
+  client_id: ENV.fetch("KEYCARD_CLIENT_ID"),
+  client_secret: ENV["KEYCARD_CLIENT_SECRET"], # omit for a public client
+)
+```
+
+Pass `metadata:` to reuse discovery results. The server must advertise a
+`revocation_endpoint`. The operation returns `nil` on HTTP 200, even for
+unknown, expired, or already revoked tokens. It does not retry.
 
 ### Sign in a device with no browser
 
