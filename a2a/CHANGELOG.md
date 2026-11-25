@@ -13,6 +13,13 @@ token exchange that keeps the user as the subject, and JSON-RPC `message/send`
 invocation. Wraps no A2A SDK; hosting an agent inside a framework is out of
 scope.
 
+## 0.2.2-keycardai-a2a (2026-11-25)
+
+
+- fix(keycardai-a2a): let A2A agent replies exceed the 1 MiB cap (#91)
+- Co-authored-by: devin-ai-keycard <devin-ai@keycard.ai>
+Co-authored-by: Larry Osakwe <larry@keycard.ai>
+
 ## 0.2.1-keycardai-a2a (2026-11-24)
 
 ## 0.2.0-keycardai-a2a (2026-09-07)
