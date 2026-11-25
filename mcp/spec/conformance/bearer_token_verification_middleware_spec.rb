@@ -202,6 +202,11 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
     expect { real_verifier(audiences: []) }.to raise_error(Keycardai::OAuth::ConfigurationError, /audiences/)
   end
 
+  it "8e: AuthProvider rejects an empty audiences array at construction" do
+    expect { Keycardai::MCP::AuthProvider.new(zone_url: zone_issuer, audiences: []) }
+      .to raise_error(Keycardai::OAuth::ConfigurationError, /audiences/)
+  end
+
   # Infrastructure failures: the zone's keys or metadata could not be fetched,
   # so the token was never judged. 503 with no challenge, so the client keeps
   # its token and retries instead of signing in again.
