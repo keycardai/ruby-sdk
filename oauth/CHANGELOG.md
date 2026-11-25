@@ -15,6 +15,24 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.11.3-keycardai-oauth (2026-11-25)
+
+
+- fix(keycardai-oauth): pace retries for cached metadata fetches (#82)
+- * fix(keycardai-oauth): pace retries for cached metadata fetches
+- Co-Authored-By: Larry Osakwe <larry@keycard.ai>
+- * test(keycardai-oauth): match base conformance spec slug
+- Co-Authored-By: Larry Osakwe <larry@keycard.ai>
+- * fix(keycardai-oauth): synchronize and bound metadata retry pacing
+- Co-Authored-By: Larry Osakwe <larry@keycard.ai>
+- * fix(keycardai-oauth): use monotonic retry deadlines in default clients
+- Co-Authored-By: Larry Osakwe <larry@keycard.ai>
+- * test(keycardai-oauth): an oversized 429 without Retry-After starts no retry delay
+- ---------
+- Co-authored-by: devin-ai-keycard <devin-ai@keycard.ai>
+Co-authored-by: Larry Osakwe <larry@keycard.ai>
+Co-authored-by: Larry Osakwe <23560354+Larry-Osakwe@users.noreply.github.com>
+
 ## 0.11.2-keycardai-oauth (2026-11-25)
 
 
