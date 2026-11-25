@@ -46,10 +46,12 @@ module Keycardai
       #   delegation; requires actor_token_type
       # @param actor_token_type [String, nil]
       # @param client_assertion [String, nil] client-authentication assertion,
-      #   form-encoded in the body
+      #   form-encoded in the body; requires client_assertion_type
       # @param client_assertion_type [String, nil]
       # @param client_id [String, nil] the application credential the
-      #   assertion authenticates as, form-encoded beside client_assertion
+      #   assertion authenticates as, form-encoded beside client_assertion.
+      #   When the credential prepares the assertion, its ID replaces this
+      #   value, or the field is omitted if the credential supplies no ID.
       # @param issuer [String, nil] per-call zone selection: resolves the zone's
       #   token endpoint and, for a multi-zone credential, that zone's client
       #   authentication. Defaults to the client's issuer.
@@ -63,7 +65,8 @@ module Keycardai
                          client_id: nil, issuer: nil)
         raise ArgumentError, "actor_token_type is required when actor_token is set" if actor_token && !actor_token_type
 
-        target = issuer || @issuer
+        validate_client_assertion(client_assertion, client_assertion_type)
+
         overrides = {
           "subject_token_type" => subject_token_type,
           "resource" => resource,
@@ -76,7 +79,7 @@ module Keycardai
           "client_assertion_type" => client_assertion_type,
           "client_id" => client_id
         }.compact
-        post_token_request(base_exchange_params(subject_token, target).merge(overrides), issuer: target)
+        post_exchange(subject_token, overrides, issuer || @issuer)
       end
 
       # Impersonate a named user: a substitute-user token exchange for
@@ -105,20 +108,24 @@ module Keycardai
 
       private
 
-      # The base exchange parameters: built by the credential when one is
-      # configured (it supplies assertion fields and defaults), otherwise the
-      # bare RFC 8693 defaults. Caller-supplied fields are merged on top.
-      def base_exchange_params(subject_token, issuer)
-        if @credential
-          @credential.prepare_token_exchange_request(subject_token: subject_token,
-                                                     token_endpoint: token_endpoint(issuer), issuer: issuer)
-        else
-          {
-            "grant_type" => GrantType::TOKEN_EXCHANGE,
-            "subject_token" => subject_token,
-            "subject_token_type" => TokenType::ACCESS_TOKEN
-          }
-        end
+      def validate_client_assertion(assertion, type)
+        raise ArgumentError, "client_assertion_type is required when client_assertion is set" if assertion && !type
+      end
+
+      def post_exchange(subject_token, overrides, issuer)
+        params = { "grant_type" => GrantType::TOKEN_EXCHANGE, "subject_token" => subject_token,
+                   "subject_token_type" => TokenType::ACCESS_TOKEN }.merge(overrides)
+        authorization = @credential&.authorization_header(issuer: issuer)
+        params = with_assertion(params, issuer) if @credential && !authorization && !overrides["client_assertion"]
+        post_token_request(params, issuer: issuer, authorization: authorization)
+      end
+
+      def with_assertion(params, issuer)
+        prepared = @credential.prepare_token_exchange_request(
+          subject_token: params.fetch("subject_token"), resource: params["resource"],
+          token_endpoint: token_endpoint(issuer), issuer: issuer
+        )
+        params.merge(prepared.slice("client_assertion", "client_assertion_type"), "client_id" => prepared["client_id"])
       end
     end
   end
