@@ -61,6 +61,122 @@ module Keycardai
       end
       private_class_method :percent_encode
 
+      # Streams a Net::HTTP response body up to MAX_RESPONSE_BODY_BYTES
+      # decoded bytes, inflating gzip/deflate incrementally so an oversized
+      # response stops before buffering or parsing.
+      module BoundedBodyReader
+        DECOMPRESSED = %w[gzip x-gzip deflate].freeze
+
+        module_function
+
+        def read(response, limit: MAX_RESPONSE_BODY_BYTES)
+          if DECOMPRESSED.include?(response["content-encoding"]&.downcase)
+            read_compressed(response, limit: limit)
+          else
+            read_plain(response, limit: limit)
+          end
+        end
+
+        def read_plain(response, limit:)
+          decoded = String.new(encoding: Encoding::BINARY)
+          each_chunk(response) { |chunk| append(decoded, chunk, response, limit) }
+          [decoded, nil]
+        end
+
+        def read_compressed(response, limit:)
+          decoded = String.new(encoding: Encoding::BINARY)
+          state = {
+            saw_bytes: false, raw_bytes: 0, body_error: nil,
+            response: response, limit: limit, inflate: Zlib::Inflate.new(32 + Zlib::MAX_WBITS),
+            gzip: %w[gzip x-gzip].include?(response["content-encoding"]&.downcase)
+          }
+          begin
+            each_chunk(response) { |chunk| consume_compressed(chunk, decoded, state) }
+            finish_compressed(decoded, state)
+          ensure
+            state[:inflate].close
+          end
+          return ["", state[:body_error]] if state[:body_error]
+
+          strip_encoding_headers(response, decoded)
+          [decoded, nil]
+        end
+
+        def consume_compressed(chunk, decoded, state)
+          return if chunk.empty?
+
+          state[:saw_bytes] = true
+          state[:raw_bytes] += chunk.bytesize
+          if state[:body_error]
+            check_limit(state[:raw_bytes], state[:response], state[:limit])
+            return
+          end
+          inflate_loop(chunk, decoded, state)
+        rescue Zlib::BufError
+          raise
+        rescue Zlib::Error => e
+          state[:body_error] = e
+        end
+
+        def inflate_loop(data, decoded, state)
+          pending = data
+          until pending.empty?
+            state[:inflate].inflate(pending) { |out| append(decoded, out, state[:response], state[:limit]) }
+            break unless state[:inflate].finished?
+
+            pending = next_gzip_member(state[:inflate].finish, decoded, state)
+          end
+        end
+
+        def next_gzip_member(leftover, decoded, state)
+          return "" if leftover.empty?
+
+          stripped = state[:gzip] ? leftover.sub(/\A\x00+/, "") : ""
+          unless stripped.start_with?("\x1f\x8b".b)
+            check_limit(decoded.bytesize + leftover.bytesize, state[:response], state[:limit])
+            return ""
+          end
+          state[:inflate].close
+          state[:inflate] = Zlib::Inflate.new(32 + Zlib::MAX_WBITS)
+          stripped
+        end
+
+        def finish_compressed(decoded, state)
+          return unless state[:saw_bytes] && state[:body_error].nil? && !state[:inflate].finished?
+
+          state[:inflate].finish { |out| append(decoded, out, state[:response], state[:limit]) }
+        rescue Zlib::BufError
+          raise
+        rescue Zlib::Error => e
+          state[:body_error] = e
+        end
+
+        def each_chunk(response, &)
+          if response.respond_to?(:read_body)
+            response.read_body(&)
+          else
+            yield response.body.to_s
+          end
+        end
+
+        def strip_encoding_headers(response, decoded)
+          response.delete("content-encoding")
+          response["content-length"] = decoded.bytesize.to_s if response["content-length"]
+        end
+
+        def append(decoded, chunk, response, limit)
+          check_limit(decoded.bytesize + chunk.bytesize, response, limit)
+          decoded << chunk
+        end
+
+        def check_limit(size, response, limit)
+          return if limit.nil? || size <= limit
+
+          raise ResponseBodyTooLargeError.new(status: response.code.to_i, limit: limit)
+        end
+      end
+      private_constant :BoundedBodyReader
+
       # Default transport backed by Net::HTTP. TLS is used for https URLs.
       #
       # Sessions are kept open and reused per instance, per thread, per
@@ -99,7 +215,8 @@ module Keycardai
         # or a zlib header for each.
         DECOMPRESSED = %w[gzip x-gzip deflate].freeze
 
-        def initialize
+        def initialize(max_response_bytes: MAX_RESPONSE_BODY_BYTES)
+          @max_response_bytes = max_response_bytes
           @registry = {}
           @registry_mutex = Mutex.new
         end
@@ -161,8 +278,31 @@ module Keycardai
 
         def perform(uri, request, timeout)
           http = session_for(uri)
-          # Timeouts are per request; a request without one gets the default
-          # back rather than the previous request's values.
+          configure_http(http, timeout, request)
+          response, body, body_error = execute_request(http, request)
+          build_response(response, body, body_error)
+        rescue *TRANSPORT_ERRORS => e
+          raise NetworkError, "request to #{uri.host} failed: #{e.class}"
+        end
+
+        def execute_request(http, request)
+          yielded = nil
+          body = nil
+          body_error = nil
+          returned = http.request(request) do |res|
+            yielded = res
+            body, body_error = BoundedBodyReader.read(res, limit: @max_response_bytes)
+          end
+          return [yielded, body, body_error] if yielded
+
+          body, body_error = BoundedBodyReader.read(returned, limit: @max_response_bytes)
+          [returned, body, body_error]
+        rescue ResponseBodyTooLargeError
+          finish(http)
+          raise
+        end
+
+        def configure_http(http, timeout, request)
           http.open_timeout = timeout || DEFAULT_TIMEOUT
           http.read_timeout = timeout || DEFAULT_TIMEOUT
           http.write_timeout = timeout || DEFAULT_TIMEOUT
@@ -171,31 +311,6 @@ module Keycardai
           # client decompresses the body itself. Assigning Accept-Encoding
           # turns off Net::HTTP's decompression.
           request["Accept-Encoding"] = ACCEPT_ENCODING if request.decode_content
-          response = http.request(request)
-          build_response(response, decompress(response))
-        rescue *TRANSPORT_ERRORS => e
-          raise NetworkError, "request to #{uri.host} failed: #{e.class}"
-        rescue Zlib::Error => e
-          build_response(response, "", e)
-        end
-
-        # Returns the body, decompressed when its Content-Encoding is gzip or
-        # deflate. Raises Zlib::BufError when the compressed stream ends
-        # early, and Zlib::DataError when the body is not compressed data.
-        def decompress(response)
-          body = response.body.to_s
-          return body if body.empty? || !DECOMPRESSED.include?(response["content-encoding"]&.downcase)
-
-          inflate = Zlib::Inflate.new(32 + Zlib::MAX_WBITS)
-          begin
-            decoded = inflate.inflate(body)
-            raise Zlib::BufError, "the compressed stream ends early" unless inflate.finished?
-          ensure
-            inflate.close
-          end
-          response.delete("content-encoding")
-          response["content-length"] = decoded.bytesize.to_s if response["content-length"]
-          decoded
         end
 
         def build_response(response, body, body_error = nil)
