@@ -21,7 +21,11 @@ module Keycardai
       # @param credential [Object, nil] this agent's application credential
       # @param client_id [String, nil] shared-secret pair alternative
       # @param client_secret [String, nil]
-      # @param http_client [#get, #post_form, #post_json] pluggable transport
+      # @param http_client [#get, #post_form, #post_json, nil] pluggable
+      #   transport for every request. When omitted, the token exchange uses a
+      #   NetHTTPClient with the 1 MiB authorization-server response cap, and
+      #   card discovery and invocation use one with no cap, since peer-agent
+      #   replies are not authorization-server traffic.
       # @param discovery [ServiceDiscovery, nil] card resolution override
       # @param invoke_timeout [Numeric, nil] JSON-RPC call timeout
       # @param protocol_version [String] the A2A generation to speak: PROTOCOL_VERSION
@@ -31,13 +35,13 @@ module Keycardai
       #   either way; the client translates it for 0.3.
       # @raise [ArgumentError] protocol_version is neither supported generation
       def initialize(issuer:, credential: nil, client_id: nil, client_secret: nil,
-                     http_client: OAuth::HTTP::NetHTTPClient.new, discovery: nil,
+                     http_client: nil, discovery: nil,
                      invoke_timeout: nil, protocol_version: PROTOCOL_VERSION)
         @exchange = OAuth::TokenExchangeClient.new(issuer: issuer, credential: credential,
                                                    client_id: client_id, client_secret: client_secret,
-                                                   http_client: http_client)
-        @discovery = discovery || ServiceDiscovery.new(http_client: http_client)
-        @http_client = http_client
+                                                   http_client: http_client || OAuth::HTTP::NetHTTPClient.new)
+        @http_client = http_client || OAuth::HTTP::NetHTTPClient.new(max_response_bytes: nil)
+        @discovery = discovery || ServiceDiscovery.new(http_client: @http_client)
         @invoke_timeout = invoke_timeout
         @wire = Wire.for(protocol_version)
       end
