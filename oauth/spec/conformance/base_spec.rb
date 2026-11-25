@@ -38,6 +38,16 @@ RSpec.describe "Base metadata caching" do
     end
   end
 
+  it "1a: an oversized 429 without Retry-After starts no retry delay" do
+    oversized = -> { raise Keycardai::OAuth::ResponseBodyTooLargeError.new(status: 429) }
+    client, http = subject_with(oversized)
+    expect { client.request_token }.to raise_error(Keycardai::OAuth::ResponseBodyTooLargeError) do |err|
+      expect(err.status).to eq(429)
+    end
+    expect(client.request_token.access_token).to eq("at")
+    expect(http.request_count(zone.metadata_url)).to eq(2)
+  end
+
   it "3: exponentially backs off repeated failures, capping jittered delays at 30 seconds" do
     client, http = subject_with(*Array.new(7, network_error))
     [1, 2, 4, 8, 16, 32, 64].each_with_index do |step, i|
