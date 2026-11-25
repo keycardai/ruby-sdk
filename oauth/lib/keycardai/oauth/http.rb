@@ -112,7 +112,9 @@ module Keycardai
             return
           end
           inflate_loop(chunk, decoded, state)
-        rescue Zlib::DataError => e
+        rescue Zlib::BufError
+          raise
+        rescue Zlib::Error => e
           state[:body_error] = e
         end
 
@@ -143,7 +145,9 @@ module Keycardai
           return unless state[:saw_bytes] && state[:body_error].nil? && !state[:inflate].finished?
 
           state[:inflate].finish { |out| append(decoded, out, state[:response], state[:limit]) }
-        rescue Zlib::DataError => e
+        rescue Zlib::BufError
+          raise
+        rescue Zlib::Error => e
           state[:body_error] = e
         end
 
@@ -279,8 +283,6 @@ module Keycardai
           build_response(response, body, body_error)
         rescue *TRANSPORT_ERRORS => e
           raise NetworkError, "request to #{uri.host} failed: #{e.class}"
-        rescue Zlib::Error => e
-          build_response(response, "", e)
         end
 
         def execute_request(http, request)
