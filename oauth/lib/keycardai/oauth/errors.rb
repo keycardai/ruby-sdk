@@ -82,6 +82,10 @@ module Keycardai
     # request after this.
     class CancelledError < Keycardai::Error; end
 
+    # Maximum decoded byte length read from any authorization-server HTTP
+    # response (1 MiB).
+    MAX_RESPONSE_BODY_BYTES = 1_048_576
+
     # The server's response violates the protocol contract: metadata with a
     # mismatched or missing issuer, a token response with no access token.
     # The +code+ discriminates the case (issuer_mismatch, invalid_metadata,
@@ -89,10 +93,33 @@ module Keycardai
     class ProtocolError < Keycardai::Error
       # @return [String]
       attr_reader :code
+      # @return [Integer, nil]
+      attr_reader :status
 
-      def initialize(message, code:)
+      def initialize(message, code:, status: nil)
         super(message)
         @code = code
+        @status = status
+      end
+
+      # @return [Boolean] whether the failure is transient based on HTTP status
+      def retryable?
+        return false unless status
+
+        (200..299).cover?(status) || status == 429 || status >= 500
+      end
+    end
+
+    # Raised when a decoded authorization-server HTTP response body exceeds
+    # MAX_RESPONSE_BODY_BYTES while streaming.
+    class ResponseBodyTooLargeError < ProtocolError
+      # @return [Integer]
+      attr_reader :limit
+
+      def initialize(status:, limit: MAX_RESPONSE_BODY_BYTES)
+        @limit = limit
+        super("response body exceeded the #{limit}-byte decoded size limit (HTTP #{status})",
+              code: "invalid_response", status: status)
       end
     end
 

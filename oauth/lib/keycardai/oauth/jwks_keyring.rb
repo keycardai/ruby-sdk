@@ -172,7 +172,7 @@ module Keycardai
       def fetch_jwks(jwks_uri)
         response = begin
           @http_client.get(jwks_uri, headers: { "Accept" => "application/json" }, timeout: @fetch_timeout)
-        rescue NetworkError => e
+        rescue NetworkError, ResponseBodyTooLargeError => e
           raise JWKSFetchError, "JWKS fetch from #{jwks_uri} failed: #{e.message}"
         end
         raise JWKSFetchError, "JWKS fetch from #{jwks_uri} returned HTTP #{response.status}" unless response.success?

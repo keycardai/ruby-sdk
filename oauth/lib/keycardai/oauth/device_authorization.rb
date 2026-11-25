@@ -382,6 +382,10 @@ module Keycardai
       rescue NetworkError => e
         # RFC 8628 §3.5: wait longer after a connection timeout.
         raise DevicePollError.new("device token poll failed: #{e.message}", interval: interval * 2)
+      rescue ResponseBodyTooLargeError => e
+        raise unless e.status == 429 || e.status.to_i >= 500
+
+        raise DevicePollError.new("device token poll failed: #{e.message}", interval: interval)
       end
 
       # The next step after a poll that raised +error+: poll again, or stop.
