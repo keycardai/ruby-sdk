@@ -116,6 +116,29 @@ RSpec.describe Keycardai::OAuth::TokenExchangeClient do
       }
   end
 
+  it "6a: preserves the denial reason separately from the description" do
+    http = token_http({ "error" => "access_denied", "error_description" => "Denied", "reason" => "custom_denial" },
+                      status: 400)
+
+    expect { client(http).exchange_token(subject_token: "at_subject") }
+      .to raise_error(Keycardai::OAuth::OAuthError) { |e|
+        expect(e.reason).to eq("custom_denial")
+        expect(e.error_description).to eq("Denied")
+        expect(e).not_to be_retryable
+      }
+  end
+
+  it "6b: leaves an omitted reason nil without changing retryability" do
+    http = token_http({ "error" => "access_denied", "error_description" => "Denied" }, status: 400)
+
+    expect { client(http).exchange_token(subject_token: "at_subject") }
+      .to raise_error(Keycardai::OAuth::OAuthError) { |e|
+        expect(e.reason).to be_nil
+        expect(e.error_description).to eq("Denied")
+        expect(e).not_to be_retryable
+      }
+  end
+
   it "7: rejects a token response missing access_token" do
     http = token_http({ "token_type" => "Bearer" })
 

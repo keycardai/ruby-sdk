@@ -57,7 +57,8 @@ module Keycardai
 
         OAuthError.new("#{endpoint_name} returned #{payload["error"]}",
                        error: payload["error"], error_description: payload["error_description"],
-                       error_uri: payload["error_uri"], status: response.status, body: response.body)
+                       error_uri: payload["error_uri"], reason: payload["reason"],
+                       status: response.status, body: response.body)
       end
 
       private
