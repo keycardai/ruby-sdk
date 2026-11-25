@@ -202,9 +202,18 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
     expect { real_verifier(audiences: []) }.to raise_error(Keycardai::OAuth::ConfigurationError, /audiences/)
   end
 
-  it "8e: AuthProvider rejects an empty audiences array at construction" do
+  it "8e: AuthProvider rejects an empty audiences array at construction and enforces a nonempty one" do
     expect { Keycardai::MCP::AuthProvider.new(zone_url: zone_issuer, audiences: []) }
       .to raise_error(Keycardai::OAuth::ConfigurationError, /audiences/)
+
+    provider = Keycardai::MCP::AuthProvider.new(zone_url: zone_issuer, audiences: %w[resource-a resource-b],
+                                                http_client: zone_http)
+    gated = described_class.new(probe, verifier: provider.token_verifier)
+    matching = token_with_audience("resource-b")
+    foreign = token_with_audience("resource-c")
+
+    expect(gated.call(rack_env(headers: { "Authorization" => "Bearer #{matching}" })).first).to eq(200)
+    expect(gated.call(rack_env(headers: { "Authorization" => "Bearer #{foreign}" })).first).to eq(401)
   end
 
   # Infrastructure failures: the zone's keys or metadata could not be fetched,
