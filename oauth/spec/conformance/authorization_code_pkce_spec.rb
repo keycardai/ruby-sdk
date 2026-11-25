@@ -74,6 +74,28 @@ RSpec.describe "Authorization code with PKCE" do
     expect(URI.decode_www_form(uri.query).map(&:first)).not_to include("resource")
   end
 
+  it "3a: preserves endpoint parameters and replaces inherited SDK parameters" do
+    url = Keycardai::OAuth.build_authorize_url(
+      "https://as.example/authorize?tenant=acme&client_id=x&client%5Fid=y",
+      client_id: "sdk-client", redirect_uri: "https://app.example.com/callback", code_challenge: "challenge"
+    )
+
+    params = URI.decode_www_form(URI(url).query).group_by(&:first).transform_values { |pairs| pairs.map(&:last) }
+    expect(params).to include("tenant" => ["acme"], "client_id" => ["sdk-client"])
+    expect(params.values.map(&:length)).to all(eq(1))
+  end
+
+  it "3b: replaces inherited resources with distinct SDK resources in order" do
+    endpoint = "https://as.example/authorize?resource=https://old"
+    options = { client_id: "sdk-client", redirect_uri: "https://app.example.com/callback", code_challenge: "challenge" }
+
+    [[%w[a b], %w[a b]], [%w[a b a], %w[a b]], [[], ["https://old"]]].each do |resources, expected|
+      url = Keycardai::OAuth.build_authorize_url(endpoint, **options, resources: resources)
+      pairs = URI.decode_www_form(URI(url).query)
+      expect(pairs.filter_map { |name, value| value if name == "resource" }).to eq(expected)
+    end
+  end
+
   it "4: exchanges a code with grant_type, code, code_verifier, and redirect_uri in the body" do
     http = token_http
     response = exchange(http)
