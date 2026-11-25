@@ -104,6 +104,38 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
     expect(info.client_id).to eq("client_abc")
   end
 
+  context "with the verified audience and actor claims" do
+    let(:gated) { described_class.new(probe, verifier: real_verifier(audiences: "resource-a")) }
+
+    def signed_caller_token(aud, **extras)
+      now = Time.now.to_i
+      claims = { "iss" => zone_issuer, "sub" => "usr_123", "client_id" => "client_abc",
+                 "iat" => now, "exp" => now + 300, "aud" => aud }.merge(extras.transform_keys(&:to_s))
+      JWT.encode(claims, zone_key, "RS256", { "kid" => "kid-1" })
+    end
+
+    it "4a: exposes all audiences and the complete actor chain" do
+      actor = { "sub" => "actor", "act" => { "sub" => "previous" } }
+      token = signed_caller_token(%w[resource-a resource-b], act: actor)
+
+      status, = gated.call(rack_env(headers: { "Authorization" => "Bearer #{token}" }))
+
+      expect(status).to eq(200)
+      claims = Keycardai::MCP.auth_info(probe.seen_env).claims
+      expect(claims["aud"]).to eq(%w[resource-a resource-b])
+      expect(claims["act"]).to eq(actor)
+    end
+
+    it "4b: exposes a string audience as a one-element array" do
+      token = signed_caller_token("resource-a")
+
+      status, = gated.call(rack_env(headers: { "Authorization" => "Bearer #{token}" }))
+
+      expect(status).to eq(200)
+      expect(Keycardai::MCP.auth_info(probe.seen_env).claims["aud"]).to eq(["resource-a"])
+    end
+  end
+
   it "5: an invalid token yields 401 invalid_token" do
     status, headers, = middleware.call(rack_env(headers: { "Authorization" => "Bearer at_bogus" }))
 
