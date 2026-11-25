@@ -186,6 +186,22 @@ RSpec.describe Keycardai::OAuth::TokenExchangeClient do
     end
   end
 
+  it "uses only the request's authentication fields for an explicit assertion with WorkloadIdentity" do
+    http = token_http
+    source = -> { raise "the configured assertion source should not be called" }
+    credential = Keycardai::OAuth::WorkloadIdentity.new(source: source, client_id: "configured")
+    assertion_type = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+
+    client(http, credential: credential).exchange_token(
+      subject_token: "at_subject", client_assertion: "assertion", client_assertion_type: assertion_type
+    )
+
+    call = token_call(http)
+    expect(call.params).to include("client_assertion" => "assertion", "client_assertion_type" => assertion_type)
+    expect(call.params).not_to have_key("client_id")
+    expect(call.headers).not_to have_key("Authorization")
+  end
+
   it "5: parses a 2xx response into the token result" do
     response = client(token_http).exchange_token(subject_token: "at_subject")
 
