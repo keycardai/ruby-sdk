@@ -61,6 +61,19 @@ RSpec.describe "Base metadata caching" do
     expect(client.request_token.access_token).to eq("at")
   end
 
+  it "3: backs off repeated oversized 5xx responses without Retry-After" do
+    failures = [503, 502].map { |status| -> { raise Keycardai::OAuth::ResponseBodyTooLargeError.new(status: status) } }
+    client, http = subject_with(*failures)
+    [1, 2].each_with_index do |step, i|
+      expect { client.request_token }.to raise_error(Keycardai::OAuth::ResponseBodyTooLargeError)
+      clock.sleep((step * 0.8) - 0.01)
+      expect { client.request_token }.to raise_error(Keycardai::OAuth::ResponseBodyTooLargeError)
+      expect(http.request_count(zone.metadata_url)).to eq(i + 1)
+      clock.sleep((step * 0.4) + 0.02)
+    end
+    expect(client.request_token.access_token).to eq("at")
+  end
+
   it "2: rejects invalid Retry-After dates, including normalized calendar dates" do
     day = clock.call + 5
     [

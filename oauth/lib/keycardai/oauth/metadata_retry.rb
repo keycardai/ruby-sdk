@@ -20,7 +20,11 @@ module Keycardai
           return !(cause.is_a?(OpenSSL::SSL::SSLError) && cause.message.include?("certificate verify failed"))
         end
 
-        error.is_a?(HTTPError) && (error.status == 429 || (500..599).cover?(error.status))
+        response_error?(error) && (error.status == 429 || (500..599).cover?(error.status))
+      end
+
+      def self.response_error?(error)
+        error.is_a?(HTTPError) || error.is_a?(ResponseBodyTooLargeError)
       end
 
       def initialize(clock, monotonic_clock: clock.equal?(WALL_CLOCK) ? MONOTONIC_CLOCK : clock)
@@ -88,11 +92,11 @@ module Keycardai
       end
 
       def throttled?(error)
-        error.is_a?(HTTPError) && error.status == 429
+        self.class.response_error?(error) && error.status == 429
       end
 
       def retry_after(error)
-        return unless error.is_a?(HTTPError) && [429, 503].include?(error.status)
+        return unless self.class.response_error?(error) && [429, 503].include?(error.status)
 
         header = error.retry_after.to_s.strip
         return [60, header.to_i].min if /\A[0-9]+\z/.match?(header)

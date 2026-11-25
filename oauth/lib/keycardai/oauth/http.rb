@@ -179,7 +179,8 @@ module Keycardai
         def check_limit(size, response, limit)
           return if limit.nil? || size <= limit
 
-          raise ResponseBodyTooLargeError.new(status: response.code.to_i, limit: limit)
+          raise ResponseBodyTooLargeError.new(status: response.code.to_i, limit: limit,
+                                              retry_after: response.get_fields("Retry-After")&.first)
         end
       end
       private_constant :BoundedBodyReader
