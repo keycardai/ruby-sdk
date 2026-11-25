@@ -29,7 +29,7 @@ module Keycardai
     end
 
     # An OAuth error response from the authorization server (RFC 6749 §5.2).
-    # Has the wire error code plus the optional description and URI.
+    # Has the wire error code plus the optional description, URI and reason.
     class OAuthError < HTTPError
       # @return [String] the OAuth error code (e.g. invalid_grant)
       attr_reader :error
@@ -37,12 +37,19 @@ module Keycardai
       attr_reader :error_description
       # @return [String, nil]
       attr_reader :error_uri
+      # The authorization server's +reason+, unchanged, or nil when the
+      # response omits it. Branch on this rather than on the description
+      # text. It is not checked against a fixed list and does not affect
+      # retryability.
+      # @return [String, nil]
+      attr_reader :reason
 
-      def initialize(message, error:, status:, body: "", error_description: nil, error_uri: nil)
+      def initialize(message, error:, status:, body: "", error_description: nil, error_uri: nil, reason: nil)
         super(message, status: status, body: body)
         @error = error
         @error_description = error_description
         @error_uri = error_uri
+        @reason = reason
       end
     end
 

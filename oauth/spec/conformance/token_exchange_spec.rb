@@ -116,6 +116,35 @@ RSpec.describe Keycardai::OAuth::TokenExchangeClient do
       }
   end
 
+  it "6a: an OAuth error exposes reason and error_description unchanged" do
+    http = token_http({ "error" => "access_denied", "error_description" => "Denied", "reason" => "custom_denial" },
+                      status: 400)
+
+    expect { client(http).exchange_token(subject_token: "at_subject") }
+      .to raise_error(Keycardai::OAuth::OAuthError) { |e|
+        expect(e.error).to eq("access_denied")
+        expect(e.reason).to eq("custom_denial")
+        expect(e.error_description).to eq("Denied")
+      }
+  end
+
+  it "6b: reason is nil when the error response omits it" do
+    http = token_http({ "error" => "access_denied", "error_description" => "Denied" }, status: 400)
+
+    expect { client(http).exchange_token(subject_token: "at_subject") }
+      .to raise_error(Keycardai::OAuth::OAuthError) { |e|
+        expect(e.reason).to be_nil
+        expect(e.error_description).to eq("Denied")
+      }
+  end
+
+  it "ignores a reason that is not a string" do
+    http = token_http({ "error" => "access_denied", "reason" => 42 }, status: 400)
+
+    expect { client(http).exchange_token(subject_token: "at_subject") }
+      .to raise_error(Keycardai::OAuth::OAuthError) { |e| expect(e.reason).to be_nil }
+  end
+
   it "7: rejects a token response missing access_token" do
     http = token_http({ "token_type" => "Bearer" })
 

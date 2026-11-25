@@ -115,4 +115,26 @@ RSpec.describe Keycardai::OAuth::ClientCredentialsClient do
         expect(e.error_description).to eq("bad secret")
       }
   end
+
+  it "6a: an OAuth error exposes reason and error_description unchanged" do
+    http = token_http({ "error" => "access_denied", "error_description" => "Denied", "reason" => "custom_denial" },
+                      status: 400)
+
+    expect { client(http).request_token }
+      .to raise_error(Keycardai::OAuth::OAuthError) { |e|
+        expect(e.error).to eq("access_denied")
+        expect(e.reason).to eq("custom_denial")
+        expect(e.error_description).to eq("Denied")
+      }
+  end
+
+  it "6b: reason is nil when the error response omits it" do
+    http = token_http({ "error" => "access_denied", "error_description" => "Denied" }, status: 400)
+
+    expect { client(http).request_token }
+      .to raise_error(Keycardai::OAuth::OAuthError) { |e|
+        expect(e.reason).to be_nil
+        expect(e.error_description).to eq("Denied")
+      }
+  end
 end

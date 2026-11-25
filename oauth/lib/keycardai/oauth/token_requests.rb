@@ -38,8 +38,9 @@ module Keycardai
       end
 
       # RFC 6749 §5.2: an error response has error, error_description, and
-      # error_uri. Anything else non-2xx is a plain HTTP error, including a
-      # response whose body does not decompress.
+      # error_uri, and a Keycard authorization server may add reason, kept
+      # unchanged when it is a string. Anything else non-2xx is a plain HTTP
+      # error, including a response whose body does not decompress.
       #
       # @param response [HTTP::Response]
       # @param endpoint_name [String] names the endpoint in the message
@@ -57,7 +58,8 @@ module Keycardai
 
         OAuthError.new("#{endpoint_name} returned #{payload["error"]}",
                        error: payload["error"], error_description: payload["error_description"],
-                       error_uri: payload["error_uri"], status: response.status, body: response.body)
+                       error_uri: payload["error_uri"], reason: (payload["reason"] if payload["reason"].is_a?(String)),
+                       status: response.status, body: response.body)
       end
 
       private
