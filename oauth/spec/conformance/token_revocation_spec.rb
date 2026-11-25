@@ -170,7 +170,7 @@ RSpec.describe Keycardai::OAuth do
     expect_unsupported_token_type(unsigned_token({ "iss" => "https://other.test", "sid" => "s-1" }))
   end
 
-  it "compares supplied metadata and explicit issuers, preserving the explicit issuer for authentication" do
+  it "compares supplied metadata and explicit issuers, preserving the explicit issuer for zone lookup" do
     metadata = described_class::AuthorizationServerMetadata.new(issuer: issuer, revocation_endpoint: endpoint)
     credential = Object.new
     credential.define_singleton_method(:client_authentication) do |issuer:, endpoint:|
@@ -180,8 +180,21 @@ RSpec.describe Keycardai::OAuth do
     expect { revoke("https://other.test", metadata: metadata) }.to raise_error(described_class::ConfigurationError)
     expect(http.requests).to be_empty
     revoke("#{issuer}/", metadata: metadata, client_id: nil, credential: credential)
-    expect(http.calls.last.headers).to include("X-Issuer" => "#{issuer}/", "X-Audience" => "#{issuer}/")
+    expect(http.calls.last.headers).to include("X-Issuer" => "#{issuer}/", "X-Audience" => issuer)
     expect(http.requests).to eq([endpoint])
+  end
+
+  it "uses the supplied metadata issuer as the assertion audience even with a trailing-slash issuer input" do
+    metadata = described_class::AuthorizationServerMetadata.new(issuer: issuer, revocation_endpoint: endpoint)
+    Dir.mktmpdir do |dir|
+      credential = described_class::WebIdentity.new(client_id: "web-client", storage_dir: dir)
+
+      revoke("#{issuer}/", metadata: metadata, client_id: nil, credential: credential)
+
+      assertion = http.calls.last.params.to_h.fetch("client_assertion")
+      expect(decode_jwt_part(assertion.split(".")[1]).fetch("aud")).to eq(issuer)
+      expect(http.requests).to eq([endpoint])
+    end
   end
 
   it "rejects insecure or malformed revocation endpoints without sending credentials" do

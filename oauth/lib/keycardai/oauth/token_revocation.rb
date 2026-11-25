@@ -31,7 +31,7 @@ module Keycardai
       endpoint = require_revocation_https(metadata.revocation_endpoint, "revocation_endpoint")
       params = [["token", token], ["token_type_hint", token_type_hint]]
       params, headers = ClientAuth.apply(params, { "Accept" => "application/json" },
-                                         issuer: issuer, endpoint: issuer, credential: credential,
+                                         issuer: issuer, endpoint: metadata.issuer, credential: credential,
                                          client_id: client_id, client_secret: client_secret)
       response = http_client.post_form(endpoint, params, headers: headers, timeout: timeout)
       raise TokenRequests.error_for(response, endpoint_name: "revocation endpoint") unless response.status == 200
