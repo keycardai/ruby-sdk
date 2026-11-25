@@ -208,7 +208,21 @@ RSpec.describe Keycardai::OAuth::WorkloadIdentity do
         end
       )
       expect { failing.identity_token }
-        .to raise_error(Keycardai::OAuth::WorkloadIdentityRuntimeError) { |e| expect(e.source).to eq("gcp-metadata") }
+        .to raise_error(Keycardai::OAuth::WorkloadIdentityRuntimeError) { |e|
+          expect(e.source).to eq("gcp-metadata")
+          expect(e).to be_retryable
+        }
+      bad_request = described_class.new(
+        audience: "aud", metadata_url: "http://metadata.test",
+        http_client: FakeHTTPClient.new do |_url|
+          Keycardai::OAuth::HTTP::Response.new(status: 400, headers: {}, body: "")
+        end
+      )
+      expect { bad_request.identity_token }
+        .to raise_error(Keycardai::OAuth::WorkloadIdentityRuntimeError) { |e|
+          expect(e.source).to eq("gcp-metadata")
+          expect(e).not_to be_retryable
+        }
       expect { described_class.new(audience: "") }
         .to raise_error(Keycardai::OAuth::WorkloadIdentityConfigurationError)
     end
