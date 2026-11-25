@@ -134,11 +134,13 @@ RSpec.describe "Response body size limit (base.md & device-authorization.md)" do
 
       with_http_server(handler) do |url|
         issuer_ref = url
-        keyring = Keycardai::OAuth::JWKSKeyring.new
+        clock = FakeClock.new
+        keyring = Keycardai::OAuth::JWKSKeyring.new(clock: clock)
         expect { keyring.key(url, "k1") }.to raise_error(Keycardai::OAuth::JWKSDiscoveryError)
         expect(calls).to eq(1)
 
         fail_first = false
+        clock.sleep(1.2) if status == 503
         expect { keyring.key(url, "k1") }.to raise_error(Keycardai::OAuth::JWKSKeyNotFoundError)
         expect(calls).to be >= 2
       end
@@ -157,6 +159,43 @@ RSpec.describe "Response body size limit (base.md & device-authorization.md)" do
       issuer_ref = url
       keyring = Keycardai::OAuth::JWKSKeyring.new
       expect { keyring.key(url, "k1") }.to raise_error(Keycardai::OAuth::JWKSFetchError)
+    end
+  end
+
+  [429, 503].product([5, 120]).each do |status, seconds|
+    it "1a: honors Retry-After of #{seconds} seconds on oversized HTTP #{status}, capped at 60 seconds" do
+      clock = FakeClock.new
+      header = seconds == 5 ? (clock.call + seconds).httpdate : seconds.to_s
+      calls = 0
+      issuer = nil
+      handler = lambda do |path|
+        if path == "/.well-known/oauth-authorization-server"
+          calls += 1
+          if calls == 1
+            [status, { "Retry-After" => header }, make_token_json(512)]
+          else
+            json_response(200, { issuer: issuer, token_endpoint: "#{issuer}/token" })
+          end
+        else
+          json_response(200, { access_token: "tok", token_type: "Bearer" })
+        end
+      end
+
+      with_http_server(handler) do |url|
+        issuer = url
+        client = Keycardai::OAuth::ClientCredentialsClient.new(issuer: url, clock: clock)
+        expect { client.request_token }.to raise_error(Keycardai::OAuth::ResponseBodyTooLargeError)
+        clock.sleep([60, seconds].min - 0.5)
+        expect { client.request_token }.to raise_error(Keycardai::OAuth::ResponseBodyTooLargeError) do |err|
+          expect(err.status).to eq(status)
+          expect(err.retry_after).to eq(header)
+          expect(err.retryable?).to be(true)
+        end
+        expect(calls).to eq(1)
+        clock.sleep(0.5)
+        expect(client.request_token.access_token).to eq("tok")
+        expect(calls).to eq(2)
+      end
     end
   end
 

@@ -117,9 +117,12 @@ module Keycardai
     class ResponseBodyTooLargeError < ProtocolError
       # @return [Integer]
       attr_reader :limit
+      # @return [String, nil]
+      attr_reader :retry_after
 
-      def initialize(status:, limit: MAX_RESPONSE_BODY_BYTES)
+      def initialize(status:, limit: MAX_RESPONSE_BODY_BYTES, retry_after: nil)
         @limit = limit
+        @retry_after = retry_after
         super("response body exceeded the #{limit}-byte decoded size limit (HTTP #{status})",
               code: "invalid_response", status: status)
       end
