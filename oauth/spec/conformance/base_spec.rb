@@ -92,6 +92,26 @@ RSpec.describe "Base metadata caching" do
     expect(retry_state.fetch(:issuer) { ticks * 2 }).to eq(10)
   end
 
+  it "3: the default client keeps its retry delay when wall time jumps" do
+    wall = Time.utc(2025, 1, 1)
+    allow(Time).to receive(:now) { wall }
+    failure = unavailable(503, "60")
+    http = FakeHTTPClient.new do |url|
+      if url == zone.token_url
+        json_response({ "access_token" => "at", "token_type" => "Bearer" })
+      else
+        response = failure
+        failure = nil
+        response ? response.call : json_response(zone.metadata)
+      end
+    end
+    client = Keycardai::OAuth::ClientCredentialsClient.new(issuer: zone.issuer, http_client: http)
+    expect { client.request_token }.to raise_error(Keycardai::OAuth::HTTPError)
+    wall += 3600
+    expect { client.request_token }.to raise_error(Keycardai::OAuth::HTTPError)
+    expect(http.request_count(zone.metadata_url)).to eq(1)
+  end
+
   it "3: bounds shared retry state and ignores a failure after concurrent invalidation" do
     retry_state = Keycardai::OAuth.const_get(:MetadataRetry).new(clock)
     error = Keycardai::OAuth::NetworkError.new("unavailable")

@@ -87,7 +87,7 @@ module Keycardai
       # @raise [ConfigurationError] no trusted issuer or explicitly empty audiences
       def initialize(issuers:, audiences: nil, http_client: HTTP::NetHTTPClient.new,
                      key_ttl: JWKSKeyring::DEFAULT_KEY_TTL, discovery_ttl: JWKSKeyring::DEFAULT_DISCOVERY_TTL,
-                     fetch_timeout: JWKSKeyring::DEFAULT_FETCH_TIMEOUT, clock: -> { Time.now })
+                     fetch_timeout: JWKSKeyring::DEFAULT_FETCH_TIMEOUT, clock: MetadataRetry::WALL_CLOCK)
         @issuers = Array(issuers).reject { |issuer| issuer.nil? || issuer.empty? }
         raise ConfigurationError, "TokenVerifier requires at least one trusted issuer" if @issuers.empty?
         raise ConfigurationError, "audiences must not be empty" if audiences.is_a?(Array) && audiences.empty?
