@@ -74,6 +74,7 @@ module Keycardai
         @clock = clock
         @token_endpoints = {}
         @token_endpoint_mutex = Mutex.new
+        @token_endpoint_flights = SingleFlight.new
       end
 
       def validate_client_auth(credential, client_id, client_secret)
@@ -88,17 +89,16 @@ module Keycardai
       # Discover a zone's token endpoint and cache it for discovery_ttl, keyed
       # by issuer so multi-zone clients never reuse another zone's endpoint.
       # Only a success is recorded: a failed discovery raises to its caller and
-      # the next call discovers again. The mutex serializes cold-cache callers
-      # so concurrent first calls perform a single fetch; an interrupted caller
-      # releases it and leaves nothing behind for the others.
+      # the next call discovers again. Concurrent cold-cache callers for one
+      # issuer share a single fetch and its outcome.
       def token_endpoint(issuer = @issuer)
-        @token_endpoint_mutex.synchronize do
+        fresh_token_endpoint(issuer) || @token_endpoint_flights.run(issuer) do
           fresh_token_endpoint(issuer) || discover_token_endpoint(issuer)
         end
       end
 
       def fresh_token_endpoint(issuer)
-        entry = @token_endpoints[issuer]
+        entry = @token_endpoint_mutex.synchronize { @token_endpoints[issuer] }
         return nil unless entry
 
         entry[:endpoint] if @clock.call - entry[:fetched_at] <= @discovery_ttl
@@ -108,7 +108,8 @@ module Keycardai
         metadata = OAuth.fetch_authorization_server_metadata(issuer, http_client: @http_client, timeout: @timeout)
         endpoint = metadata.token_endpoint ||
                    raise(ProtocolError.new("metadata for #{issuer} has no token_endpoint", code: "invalid_metadata"))
-        @token_endpoints[issuer] = { endpoint: endpoint, fetched_at: @clock.call }
+        entry = { endpoint: endpoint, fetched_at: @clock.call }
+        @token_endpoint_mutex.synchronize { @token_endpoints[issuer] = entry }
         endpoint
       end
 

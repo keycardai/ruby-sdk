@@ -94,6 +94,30 @@ RSpec.describe Keycardai::OAuth::JWKSKeyring do
     expect(http.request_count(zone.jwks_url)).to eq(1)
   end
 
+  [
+    { name: "discovery", url: :metadata_url, error: Keycardai::OAuth::JWKSDiscoveryError, jwks_fetches: 0 },
+    { name: "JWKS fetch", url: :jwks_url, error: Keycardai::OAuth::JWKSFetchError, jwks_fetches: 1 }
+  ].each do |c|
+    it "concurrent cold-cache lookups share one failed #{c[:name]} and get its error" do
+      gate = Queue.new
+      failing_url = zone.public_send(c[:url])
+      http = zone.http_client(failing_url => lambda do
+        gate.pop if http.request_count(failing_url) == 1
+        json_response({}, status: 503)
+      end)
+      ring = keyring(http)
+
+      first, others = start_shared_callers { ring.key(zone.issuer, "kid-1") }
+      gate << :go
+      errors = [first, *others].map { |thread| outcome(thread) }
+
+      expect(errors).to all(be_a(c[:error]))
+      expect(errors.map(&:object_id).uniq.size).to eq(1)
+      expect(http.request_count(zone.metadata_url)).to eq(1)
+      expect(http.request_count(zone.jwks_url)).to eq(c[:jwks_fetches])
+    end
+  end
+
   # Rows 14 to 19 (SDK-93): the per-jwks_uri key set and the refetch cooldown.
   it "14: distinct unknown kids within the cooldown cause one JWKS fetch" do
     http = zone.http_client
@@ -139,6 +163,42 @@ RSpec.describe Keycardai::OAuth::JWKSKeyring do
     threads = %w[a b c d].map { |kid| Thread.new { ring.key(zone.issuer, kid) } }
     threads.each(&:join)
 
+    expect(http.request_count(zone.jwks_url)).to eq(1)
+  end
+
+  # The second lookup misses the cache, then stalls until the first lookup's
+  # fetch has stored its key set. Its own fetch must then reuse that set.
+  it "17: a miss that starts its fetch after another fetch stored the key set reuses that set" do
+    zone = ZoneFixture.new(kids: %w[a b])
+    gate = Queue.new
+    stall = Queue.new
+    http = zone.http_client(zone.jwks_url => lambda do
+      gate.pop if http.request_count(zone.jwks_url) == 1
+      json_response(zone.jwks)
+    end)
+    ring = keyring(http)
+    ring.send(:resolve_jwks_uri, zone.issuer)
+    allow(ring).to receive(:fresh_key_set).and_wrap_original do |original, *args|
+      result = original.call(*args)
+      if Thread.current[:stall_after_miss]
+        Thread.current[:stall_after_miss] = false
+        stall.pop
+      end
+      result
+    end
+
+    first = quiet_thread { ring.key(zone.issuer, "a") }
+    wait_until_blocked([first])
+    second = quiet_thread do
+      Thread.current[:stall_after_miss] = true
+      ring.key(zone.issuer, "b")
+    end
+    wait_until_blocked([first, second])
+    gate << :go
+    expect(outcome(first)).not_to be_a(Exception)
+    stall << :go
+
+    expect(outcome(second)).not_to be_a(Exception)
     expect(http.request_count(zone.jwks_url)).to eq(1)
   end
 
