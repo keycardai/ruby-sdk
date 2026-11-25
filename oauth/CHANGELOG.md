@@ -15,6 +15,22 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.11.2-keycardai-oauth (2026-11-25)
+
+
+- fix(keycardai-oauth): cap decoded authorization-server responses at 1 MiB (#81)
+- * fix(keycardai-oauth): cap decoded authorization-server responses at 1 MiB
+- Co-Authored-By: Larry Osakwe <larry@keycard.ai>
+- * fix(keycardai-oauth): fix chunked overflow cleanup and multi-member gzip inflation
+- Co-Authored-By: Larry Osakwe <larry@keycard.ai>
+- * fix(keycardai-oauth): capture non-BufError Zlib errors inside BoundedBodyReader
+- Co-Authored-By: Larry Osakwe <larry@keycard.ai>
+- * fix(keycardai-oauth): map oversized metadata server replies and cover device polling overflows
+- ---------
+- Co-authored-by: devin-ai-keycard <devin-ai@keycard.ai>
+Co-authored-by: Larry Osakwe <larry@keycard.ai>
+Co-authored-by: Larry Osakwe <23560354+Larry-Osakwe@users.noreply.github.com>
+
 ## 0.11.1-keycardai-oauth (2026-11-25)
 
 
