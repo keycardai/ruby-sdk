@@ -37,6 +37,21 @@ module Keycardai
         @mutex = Mutex.new
       end
 
+      # Shows the zone URL, the audiences, and the credential's class. A
+      # credential defined outside the SDK may print its own secrets.
+      #
+      # @return [String]
+      def inspect
+        credential = @credential.nil? ? "nil" : @credential.class.name || @credential.class.to_s
+        "#<#{self.class} zone_url=#{@zone_url.inspect}, audiences=#{@audiences.inspect}, credential=#{credential}>"
+      end
+      alias to_s inspect
+
+      # Used by pp.
+      def pretty_print(printer)
+        printer.text(inspect)
+      end
+
       # The issuers this provider trusts: the zone URL, plus every zone of a
       # multi-zone credential.
       #
