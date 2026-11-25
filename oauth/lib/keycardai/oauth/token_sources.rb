@@ -122,6 +122,11 @@ module Keycardai
     class FlyTokenSource
       DEFAULT_SOCKET_PATH = "/.fly/api"
       TOKEN_PATH = "/v1/tokens/oidc"
+      TRANSIENT_SOCKET_ERRORS = [
+        Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::ECONNABORTED,
+        Errno::ETIMEDOUT, Errno::EPIPE, Errno::EAGAIN, Errno::EWOULDBLOCK,
+        Errno::EINTR
+      ].freeze
 
       # @param audience [String, nil] included as {"aud": audience} when set
       # @param socket_path [String]
@@ -160,8 +165,9 @@ module Keycardai
           parse_http_response(socket.read)
         end
       rescue SystemCallError => e
+        retryable = TRANSIENT_SOCKET_ERRORS.any? { |err| e.is_a?(err) }
         raise WorkloadIdentityRuntimeError.new("fly API socket #{@socket_path} unreachable: #{e.message}",
-                                               source: "fly", retryable: true)
+                                               source: "fly", retryable: retryable)
       end
 
       def parse_http_response(raw)

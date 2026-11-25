@@ -250,5 +250,16 @@ RSpec.describe Keycardai::OAuth::WorkloadIdentity do
         server&.close
       end
     end
+
+    it "marks a missing Fly socket non-retryable" do
+      Dir.mktmpdir do |dir|
+        source = described_class.new(socket_path: File.join(dir, "missing.sock"))
+        expect { source.identity_token }
+          .to raise_error(Keycardai::OAuth::WorkloadIdentityRuntimeError) { |e|
+            expect(e.source).to eq("fly")
+            expect(e).not_to be_retryable
+          }
+      end
+    end
   end
 end
