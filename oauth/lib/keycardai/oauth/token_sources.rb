@@ -98,7 +98,7 @@ module Keycardai
         url = "#{@metadata_url}#{IDENTITY_PATH}?#{URI.encode_www_form("audience" => @audience, "format" => "full")}"
         response = begin
           @http_client.get(url, headers: { "Metadata-Flavor" => "Google" }, timeout: @timeout)
-        rescue NetworkError => e
+        rescue NetworkError, ResponseBodyTooLargeError => e
           raise WorkloadIdentityRuntimeError.new("metadata server unreachable: #{e.message}", source: "gcp-metadata")
         end
         unless response.success?

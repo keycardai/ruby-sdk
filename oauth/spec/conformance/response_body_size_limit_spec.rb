@@ -255,4 +255,44 @@ RSpec.describe "Response body size limit (base.md & device-authorization.md)" do
       end
     end
   end
+
+  it "36: wait_for_token raises invalid_response for an oversized 200 or 400 without polling again" do
+    [200, 400].each do |status|
+      polls = 0
+      handler = lambda do |_path|
+        polls += 1
+        [status, { "Content-Type" => "application/json" }, make_token_json(512)]
+      end
+
+      with_http_server(handler) do |url|
+        now = Time.at(1_000_000)
+        metadata = Keycardai::OAuth::AuthorizationServerMetadata.new(
+          issuer: url,
+          device_authorization_endpoint: "#{url}/device",
+          token_endpoint: "#{url}/token"
+        )
+        client = Keycardai::OAuth::DeviceAuthorizationClient.new(
+          issuer: url,
+          metadata: metadata,
+          client_id: "cid",
+          clock: -> { now },
+          sleep: ->(s) { now += s }
+        )
+        auth = Keycardai::OAuth::DeviceAuthorization.new(
+          device_code: "dev-1",
+          user_code: "ABCD-1234",
+          verification_uri: "#{url}/verify",
+          verification_uri_complete: nil,
+          expires_in: 600,
+          interval: 5,
+          expires_at: now + 600
+        )
+        expect { client.wait_for_token(auth) }.to raise_error(Keycardai::OAuth::ResponseBodyTooLargeError) do |err|
+          expect(err.code).to eq("invalid_response")
+          expect(err.status).to eq(status)
+        end
+        expect(polls).to eq(1)
+      end
+    end
+  end
 end
