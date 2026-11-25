@@ -15,6 +15,13 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.9.0-keycardai-oauth (2026-11-25)
+
+
+- feat(keycardai-oauth): preserve authorization server error reasons (#74)
+- Co-authored-by: devin-ai-keycard <devin-ai@keycard.ai>
+Co-authored-by: Devin AI <158243242+devin-ai-integration[bot]@users.noreply.github.com>
+
 ## 0.8.1-keycardai-oauth (2026-11-25)
 
 
