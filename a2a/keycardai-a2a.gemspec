@@ -21,5 +21,5 @@ Gem::Specification.new do |spec|
   spec.files = Dir["lib/**/*.rb", "CHANGELOG.md", "README.md", "LICENSE"]
   spec.require_paths = ["lib"]
 
-  spec.add_dependency "keycardai-oauth", ">= 0.1.0"
+  spec.add_dependency "keycardai-oauth", ">= 0.11.2"
 end
