@@ -43,7 +43,7 @@ module Keycardai
       # client_authentication, or when neither credential nor a non-empty
       # client_id is set. A credential that responds to
       # check_client_authentication is checked with it, so a WorkloadIdentity
-      # without client_id raises here. Call it before any request.
+      # or WebIdentity without client_id raises here. Call it before any request.
       #
       # @raise [ConfigurationError]
       def validate(credential:, client_id:, client_secret: nil)
