@@ -127,8 +127,9 @@ module Keycardai
       CANCELLATION_CHECK_INTERVAL = 0.5
 
       # @param issuer [String, nil] the zone's issuer URL; required unless
-      #   metadata is given. With metadata, the client uses metadata.issuer
-      #   and this must match it, ignoring a trailing slash.
+      #   metadata is given. With metadata, this must match metadata.issuer,
+      #   ignoring a trailing slash, and the credential gets this spelling.
+      #   Without it, the credential gets metadata.issuer.
       # @param metadata [AuthorizationServerMetadata, nil] pre-discovered
       #   metadata; no discovery request is made
       # @param credential [#client_authentication, nil] authenticates every
@@ -298,7 +299,8 @@ module Keycardai
           return issuer
         end
         raise ConfigurationError, "the metadata has no issuer" unless metadata.issuer.is_a?(String)
-        return metadata.issuer if issuer.nil? || issuer.chomp("/") == metadata.issuer.chomp("/")
+        return metadata.issuer if issuer.nil?
+        return issuer if issuer.chomp("/") == metadata.issuer.chomp("/")
 
         raise ConfigurationError, "issuer #{issuer} does not match the metadata issuer #{metadata.issuer}"
       end
