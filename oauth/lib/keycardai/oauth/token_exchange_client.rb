@@ -56,6 +56,7 @@ module Keycardai
       #   token endpoint and, for a multi-zone credential, that zone's client
       #   authentication. Defaults to the client's issuer.
       # @return [TokenResponse]
+      # @raise [ConfigurationError] when the request sets client_id with HTTP Basic
       # @raise [OAuthError] an RFC 6749 §5.2 error response (invalid_grant,
       #   invalid_target, invalid_scope, unauthorized_client, ...)
       # @raise [HTTPError, ProtocolError, NetworkError]
@@ -112,11 +113,19 @@ module Keycardai
         raise ArgumentError, "client_assertion_type is required when client_assertion is set" if assertion && !type
       end
 
+      # An explicit client_assertion authenticates the client on its own, so
+      # the credential adds no Basic header and prepares no assertion.
       def post_exchange(subject_token, overrides, issuer)
         params = { "grant_type" => GrantType::TOKEN_EXCHANGE, "subject_token" => subject_token,
                    "subject_token_type" => TokenType::ACCESS_TOKEN }.merge(overrides)
+        return post_token_request(params, issuer: issuer, authorization: nil) if overrides["client_assertion"]
+
         authorization = @credential&.authorization_header(issuer: issuer)
-        params = with_assertion(params, issuer) if @credential && !authorization && !overrides["client_assertion"]
+        if overrides.key?("client_id") && authorization&.match?(/\ABasic\s/i)
+          raise ConfigurationError, "token exchange client_id cannot be sent with HTTP Basic"
+        end
+
+        params = with_assertion(params, issuer) if @credential && !authorization
         post_token_request(params, issuer: issuer, authorization: authorization)
       end
 
