@@ -106,6 +106,27 @@ RSpec.describe "Authorization server discovery" do
     end
   end
 
+  it "12: types both revocation fields when the document carries them" do
+    endpoint = "#{zone.issuer}/revoke"
+    methods = %w[client_secret_basic client_secret_post private_key_jwt none]
+    http = zone.http_client(zone.metadata_url => lambda {
+      json_response(zone.metadata.merge("revocation_endpoint" => endpoint,
+                                        "revocation_endpoint_auth_methods_supported" => methods))
+    })
+
+    metadata = discover(http)
+
+    expect(metadata.revocation_endpoint).to eq(endpoint)
+    expect(metadata.revocation_endpoint_auth_methods_supported).to eq(methods)
+  end
+
+  it "13: leaves both revocation fields nil when the document omits them" do
+    metadata = discover(zone.http_client)
+
+    expect(metadata.revocation_endpoint).to be_nil
+    expect(metadata.revocation_endpoint_auth_methods_supported).to be_nil
+  end
+
   it "raises a configuration error for an empty issuer" do
     expect { Keycardai::OAuth.fetch_authorization_server_metadata("", http_client: zone.http_client) }
       .to raise_error(Keycardai::OAuth::ConfigurationError)

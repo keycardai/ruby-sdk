@@ -77,12 +77,11 @@ module Keycardai
       end
 
       # Client authentication for one request: a newly signed client assertion
-      # and its type, as form fields. The assertion's aud is the endpoint the
-      # request goes to. A Keycard zone rejects any other aud with
-      # invalid_client. Each call signs a new assertion with a new jti.
+      # and its type, as form fields. The assertion's aud is the endpoint
+      # input. Each call signs a new assertion with a new jti.
       #
       # @param issuer [String, nil] unused; part of the Credential interface
-      # @param endpoint [String] the URL the request goes to
+      # @param endpoint [String] the assertion audience URL
       # @return [ClientAuthentication]
       # @raise [ConfigurationError] when endpoint is missing
       def client_authentication(issuer:, endpoint:)
