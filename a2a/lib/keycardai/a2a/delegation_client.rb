@@ -23,9 +23,9 @@ module Keycardai
       # @param client_secret [String, nil]
       # @param http_client [#get, #post_form, #post_json, nil] pluggable
       #   transport for every request. When omitted, the token exchange uses a
-      #   NetHTTPClient with the 1 MiB authorization-server response cap, and
-      #   card discovery and invocation use one with no cap, since peer-agent
-      #   replies are not authorization-server traffic.
+      #   NetHTTPClient with the 1 MiB authorization-server response cap.
+      # @param max_peer_response_bytes [Integer] positive decoded byte limit
+      #   for default card discovery and invocation transports (64 MiB by default)
       # @param discovery [ServiceDiscovery, nil] card resolution override
       # @param invoke_timeout [Numeric, nil] JSON-RPC call timeout
       # @param protocol_version [String] the A2A generation to speak: PROTOCOL_VERSION
@@ -36,11 +36,12 @@ module Keycardai
       # @raise [ArgumentError] protocol_version is neither supported generation
       def initialize(issuer:, credential: nil, client_id: nil, client_secret: nil,
                      http_client: nil, discovery: nil,
-                     invoke_timeout: nil, protocol_version: PROTOCOL_VERSION)
+                     invoke_timeout: nil, protocol_version: PROTOCOL_VERSION,
+                     max_peer_response_bytes: PeerHTTP::DEFAULT_MAX_RESPONSE_BYTES)
         @exchange = OAuth::TokenExchangeClient.new(issuer: issuer, credential: credential,
                                                    client_id: client_id, client_secret: client_secret,
                                                    http_client: http_client || OAuth::HTTP::NetHTTPClient.new)
-        @http_client = http_client || OAuth::HTTP::NetHTTPClient.new(max_response_bytes: nil)
+        @http_client = PeerHTTP.client(http_client, max_peer_response_bytes)
         @discovery = discovery || ServiceDiscovery.new(http_client: @http_client)
         @invoke_timeout = invoke_timeout
         @wire = Wire.for(protocol_version)
@@ -78,14 +79,14 @@ module Keycardai
                     "params" => @wire.encode_params(message) }
         headers = { "Accept" => "application/json", "Authorization" => "Bearer #{access_token}",
                     @wire.header => @wire.version }
-        response = begin
-          @http_client.post_json(url, payload, headers: headers, timeout: @invoke_timeout)
-        rescue OAuth::NetworkError => e
-          raise InvocationError, "invocation of #{url} failed: #{e.message}"
-        end
+        response = @http_client.post_json(url, payload, headers: headers, timeout: @invoke_timeout)
         raise InvocationError, "invocation of #{url} returned HTTP #{response.status}" unless response.success?
 
         parse_jsonrpc(url, response.body)
+      rescue OAuth::ResponseBodyTooLargeError => e
+        raise InvocationResponseBodyTooLargeError.new(status: e.status, limit: e.limit, retry_after: e.retry_after)
+      rescue OAuth::NetworkError => e
+        raise InvocationError, "invocation of #{url} failed: #{e.message}"
       end
 
       def parse_jsonrpc(url, body)

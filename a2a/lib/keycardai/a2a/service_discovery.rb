@@ -6,20 +6,19 @@ module Keycardai
   module A2A
     # Resolves an agent's base URL to its agent card, fetched from
     # /.well-known/agent-card.json and cached (default 15 minutes,
-    # refreshable). A card must carry a name to be valid. The default
-    # transport reads cards of any size: the 1 MiB response cap applies to
-    # authorization-server traffic, not to peer agents.
+    # refreshable). A card must carry a name to be valid.
     class ServiceDiscovery
       DEFAULT_CACHE_TTL = 900
 
-      # @param http_client [#get] pluggable transport; the default reads
-      #   response bodies without a size limit
+      # @param http_client [#get, nil] pluggable transport
+      # @param max_peer_response_bytes [Integer] positive decoded byte limit
+      #   for the default transport (64 MiB by default)
       # @param cache_ttl [Numeric] card cache lifetime in seconds
       # @param timeout [Numeric, nil] fetch timeout
       # @param clock [#call] returns the current Time; override in tests
-      def initialize(http_client: OAuth::HTTP::NetHTTPClient.new(max_response_bytes: nil),
-                     cache_ttl: DEFAULT_CACHE_TTL, timeout: nil, clock: -> { Time.now })
-        @http_client = http_client
+      def initialize(http_client: nil, cache_ttl: DEFAULT_CACHE_TTL, timeout: nil, clock: -> { Time.now },
+                     max_peer_response_bytes: PeerHTTP::DEFAULT_MAX_RESPONSE_BYTES)
+        @http_client = PeerHTTP.client(http_client, max_peer_response_bytes)
         @cache_ttl = cache_ttl
         @timeout = timeout
         @clock = clock
