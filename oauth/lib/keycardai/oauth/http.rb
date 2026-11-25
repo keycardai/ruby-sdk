@@ -69,29 +69,32 @@ module Keycardai
 
         module_function
 
-        def read(response, on_overflow:)
+        def read(response, limit: MAX_RESPONSE_BODY_BYTES)
           if DECOMPRESSED.include?(response["content-encoding"]&.downcase)
-            read_compressed(response, on_overflow: on_overflow)
+            read_compressed(response, limit: limit)
           else
-            read_plain(response, on_overflow: on_overflow)
+            read_plain(response, limit: limit)
           end
         end
 
-        def read_plain(response, on_overflow:)
+        def read_plain(response, limit:)
           decoded = String.new(encoding: Encoding::BINARY)
-          each_chunk(response) { |chunk| append(decoded, chunk, response, on_overflow) }
+          each_chunk(response) { |chunk| append(decoded, chunk, response, limit) }
           [decoded, nil]
         end
 
-        def read_compressed(response, on_overflow:)
+        def read_compressed(response, limit:)
           decoded = String.new(encoding: Encoding::BINARY)
-          state = { saw_bytes: false, raw_bytes: 0, body_error: nil, response: response, on_overflow: on_overflow }
-          inflate = Zlib::Inflate.new(32 + Zlib::MAX_WBITS)
+          state = {
+            saw_bytes: false, raw_bytes: 0, body_error: nil,
+            response: response, limit: limit, inflate: Zlib::Inflate.new(32 + Zlib::MAX_WBITS),
+            gzip: %w[gzip x-gzip].include?(response["content-encoding"]&.downcase)
+          }
           begin
-            each_chunk(response) { |chunk| consume_compressed(inflate, chunk, decoded, state) }
-            finish_compressed(inflate, decoded, state)
+            each_chunk(response) { |chunk| consume_compressed(chunk, decoded, state) }
+            finish_compressed(decoded, state)
           ensure
-            inflate.close
+            state[:inflate].close
           end
           return ["", state[:body_error]] if state[:body_error]
 
@@ -99,24 +102,47 @@ module Keycardai
           [decoded, nil]
         end
 
-        def consume_compressed(inflate, chunk, decoded, state)
+        def consume_compressed(chunk, decoded, state)
           return if chunk.empty?
 
           state[:saw_bytes] = true
           state[:raw_bytes] += chunk.bytesize
           if state[:body_error]
-            check_limit(state[:raw_bytes], state[:response], state[:on_overflow])
+            check_limit(state[:raw_bytes], state[:response], state[:limit])
             return
           end
-          inflate.inflate(chunk) { |out| append(decoded, out, state[:response], state[:on_overflow]) }
+          inflate_loop(chunk, decoded, state)
         rescue Zlib::DataError => e
           state[:body_error] = e
         end
 
-        def finish_compressed(inflate, decoded, state)
-          return unless state[:saw_bytes] && state[:body_error].nil?
+        def inflate_loop(data, decoded, state)
+          pending = data
+          until pending.empty?
+            state[:inflate].inflate(pending) { |out| append(decoded, out, state[:response], state[:limit]) }
+            break unless state[:inflate].finished?
 
-          inflate.finish { |out| append(decoded, out, state[:response], state[:on_overflow]) }
+            pending = next_gzip_member(state[:inflate].finish, decoded, state)
+          end
+        end
+
+        def next_gzip_member(leftover, decoded, state)
+          return "" if leftover.empty?
+
+          stripped = state[:gzip] ? leftover.sub(/\A\x00+/, "") : ""
+          unless stripped.start_with?("\x1f\x8b".b)
+            check_limit(decoded.bytesize + leftover.bytesize, state[:response], state[:limit])
+            return ""
+          end
+          state[:inflate].close
+          state[:inflate] = Zlib::Inflate.new(32 + Zlib::MAX_WBITS)
+          stripped
+        end
+
+        def finish_compressed(decoded, state)
+          return unless state[:saw_bytes] && state[:body_error].nil? && !state[:inflate].finished?
+
+          state[:inflate].finish { |out| append(decoded, out, state[:response], state[:limit]) }
         rescue Zlib::DataError => e
           state[:body_error] = e
         end
@@ -134,16 +160,15 @@ module Keycardai
           response["content-length"] = decoded.bytesize.to_s if response["content-length"]
         end
 
-        def append(decoded, chunk, response, on_overflow)
-          check_limit(decoded.bytesize + chunk.bytesize, response, on_overflow)
+        def append(decoded, chunk, response, limit)
+          check_limit(decoded.bytesize + chunk.bytesize, response, limit)
           decoded << chunk
         end
 
-        def check_limit(size, response, on_overflow)
-          return if size <= MAX_RESPONSE_BODY_BYTES
+        def check_limit(size, response, limit)
+          return if limit.nil? || size <= limit
 
-          on_overflow.call
-          raise ResponseBodyTooLargeError.new(status: response.code.to_i)
+          raise ResponseBodyTooLargeError.new(status: response.code.to_i, limit: limit)
         end
       end
       private_constant :BoundedBodyReader
@@ -186,7 +211,8 @@ module Keycardai
         # or a zlib header for each.
         DECOMPRESSED = %w[gzip x-gzip deflate].freeze
 
-        def initialize
+        def initialize(max_response_bytes: MAX_RESPONSE_BODY_BYTES)
+          @max_response_bytes = max_response_bytes
           @registry = {}
           @registry_mutex = Mutex.new
         end
@@ -263,12 +289,15 @@ module Keycardai
           body_error = nil
           returned = http.request(request) do |res|
             yielded = res
-            body, body_error = BoundedBodyReader.read(res, on_overflow: -> { finish(http) })
+            body, body_error = BoundedBodyReader.read(res, limit: @max_response_bytes)
           end
           return [yielded, body, body_error] if yielded
 
-          body, body_error = BoundedBodyReader.read(returned, on_overflow: -> { finish(http) })
+          body, body_error = BoundedBodyReader.read(returned, limit: @max_response_bytes)
           [returned, body, body_error]
+        rescue ResponseBodyTooLargeError
+          finish(http)
+          raise
         end
 
         def configure_http(http, timeout, request)
