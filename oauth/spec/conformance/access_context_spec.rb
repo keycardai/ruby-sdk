@@ -157,6 +157,20 @@ RSpec.describe Keycardai::OAuth::AccessContext do
       expect(ctx.resource_error("https://bad.test")).to be_a(Keycardai::OAuth::OAuthError)
     end
 
+    it "5a: preserves the authorization-server reason in the resource error" do
+      http = FakeHTTPClient.new do |url, _params|
+        next json_response(zone.metadata) if url == zone.metadata_url
+
+        json_response({ "error" => "access_denied", "reason" => "policy_denied" }, status: 400)
+      end
+
+      ctx = Keycardai::OAuth.exchange_tokens_for_resources(
+        client: client(http), resources: ["https://a.test"], subject_token: "at_subject"
+      )
+
+      expect(ctx.resource_error("https://a.test").reason).to eq("policy_denied")
+    end
+
     it "impersonates instead of exchanging when user_identifier is given" do
       http = FakeHTTPClient.new do |url, _params|
         url == zone.metadata_url ? json_response(zone.metadata) : json_response({ "access_token" => "at_imp" })

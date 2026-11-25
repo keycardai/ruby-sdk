@@ -29,20 +29,30 @@ module Keycardai
     end
 
     # An OAuth error response from the authorization server (RFC 6749 §5.2).
-    # Has the wire error code plus the optional description and URI.
+    # Has the wire error code plus the optional description, URI, and reason.
     class OAuthError < HTTPError
+      PERMANENT_ERROR_CODES = %w[access_denied expired_token insufficient_authorization invalid_client].freeze
+
       # @return [String] the OAuth error code (e.g. invalid_grant)
       attr_reader :error
       # @return [String, nil]
       attr_reader :error_description
       # @return [String, nil]
       attr_reader :error_uri
+      # @return [String, nil]
+      attr_reader :reason
 
-      def initialize(message, error:, status:, body: "", error_description: nil, error_uri: nil)
+      def initialize(message, error:, status:, body: "", error_description: nil, error_uri: nil, reason: nil)
         super(message, status: status, body: body)
         @error = error
         @error_description = error_description
         @error_uri = error_uri
+        @reason = reason
+      end
+
+      # @return [Boolean] whether repeating the request unchanged could succeed
+      def retryable?
+        status == 429 || status.to_i >= 500 || !PERMANENT_ERROR_CODES.include?(error)
       end
     end
 
