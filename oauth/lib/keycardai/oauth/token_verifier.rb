@@ -21,6 +21,15 @@ module Keycardai
     # #subject and #client_id are RFC 9068. The other two are Keycard claims
     # and are absent from a non-Keycard token, so they return nil there.
     AccessToken = Data.define(:token, :claims) do
+      include PrintedForm
+
+      # Shows the claims and leaves out the bearer token. #token keeps it.
+      #
+      # @return [String]
+      def inspect
+        "#<data #{self.class} claims=#{claims.inspect}>"
+      end
+
       # @return [String] the token's subject: the user for a user-present
       #   token, the application for an application token
       def subject

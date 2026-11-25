@@ -14,6 +14,8 @@ module Keycardai
     # Holds no shared secret and contributes no Basic header. Never reads
     # environment variables; the caller supplies storage configuration.
     class WebIdentity
+      include PrintedForm
+
       # @param client_id [String] the registered OAuth client id, signed as
       #   the assertion's iss and sub
       # @param server_name [String, nil] sanitized into the key id when no
@@ -39,6 +41,13 @@ module Keycardai
       # @return [String] the key id used as the assertion's kid
       def key_id
         @key_manager.key_id
+      end
+
+      # Shows the client ID and the key ID. Never shows the private key.
+      #
+      # @return [String]
+      def inspect
+        "#<#{self.class} client_id=#{@client_id.inspect}, key_id=#{key_id.inspect}>"
       end
 
       # Assertion-based authentication contributes no Basic header.

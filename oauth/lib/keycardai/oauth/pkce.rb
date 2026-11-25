@@ -14,7 +14,19 @@ module Keycardai
       METHODS = %w[S256 plain].freeze
 
       # A verifier with its derived challenge.
-      Pair = Data.define(:code_verifier, :code_challenge, :code_challenge_method)
+      Pair = Data.define(:code_verifier, :code_challenge, :code_challenge_method) do
+        include PrintedForm
+
+        # Leaves out code_verifier, and code_challenge too when the method is
+        # plain, because a plain challenge is the verifier. #to_h keeps both.
+        #
+        # @return [String]
+        def inspect
+          hidden = code_challenge_method == "plain" ? %i[code_verifier code_challenge] : %i[code_verifier]
+          shown = to_h.except(*hidden).map { |name, value| "#{name}=#{value.inspect}" }
+          "#<data #{self.class} #{shown.join(", ")}>"
+        end
+      end
 
       module_function
 

@@ -17,6 +17,8 @@ module Keycardai
     DeviceAuthorization = Data.define(
       :device_code, :user_code, :verification_uri, :verification_uri_complete, :expires_in, :interval, :expires_at
     ) do
+      include PrintedForm
+
       # @param device_code [String]
       # @param user_code [String]
       # @param verification_uri [String]
@@ -37,12 +39,6 @@ module Keycardai
       def inspect
         shown = to_h.except(:device_code).map { |name, value| "#{name}=#{value.inspect}" }
         "#<data #{self.class} #{shown.join(", ")}>"
-      end
-      alias_method :to_s, :inspect
-
-      # Used by pp.
-      def pretty_print(printer)
-        printer.text(inspect)
       end
 
       # Parse a 2xx device authorization response.
@@ -118,6 +114,8 @@ module Keycardai
     # token_endpoint from the metadata passed in, or from discovery. It does
     # not keep state between operations, except the discovery cache.
     class DeviceAuthorizationClient
+      include PrintedForm
+
       # Poll interval, in seconds, when the response omits one (RFC 8628 §3.2).
       DEFAULT_INTERVAL = 5
       # Seconds added to the interval on each slow_down (RFC 8628 §3.5).
@@ -195,6 +193,15 @@ module Keycardai
         raise TokenRequests.error_for(response, endpoint_name: "device authorization endpoint") unless response.success?
 
         DeviceAuthorization.from_response(response, received_at: @clock.call)
+      end
+
+      # Shows the issuer, the public client_id, and the credential's class. A
+      # credential defined outside the SDK may print its own secrets.
+      #
+      # @return [String]
+      def inspect
+        "#<#{self.class} issuer=#{@issuer.inspect}, client_id=#{@client_id.inspect}, " \
+          "credential=#{PrintedForm.type_of(@credential)}>"
       end
 
       # Poll the token endpoint once with the authorization's device_code.

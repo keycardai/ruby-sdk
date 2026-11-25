@@ -28,6 +28,19 @@ module Keycardai
     TokenResponse = Data.define(
       :access_token, :token_type, :expires_in, :scope, :issued_token_type, :refresh_token, :id_token, :raw
     ) do
+      include PrintedForm
+
+      # Shows every member except the access, refresh, and ID tokens, and
+      # only the field names of +raw+. #to_h and +raw+ keep the tokens, so a
+      # stored response can be used.
+      #
+      # @return [String]
+      def inspect
+        shown = to_h.except(:access_token, :refresh_token, :id_token, :raw)
+                    .map { |name, value| "#{name}=#{value.inspect}" }
+        "#<data #{self.class} #{shown.join(", ")}, raw=#{raw.to_h.keys.inspect}>"
+      end
+
       # @param payload [Hash] the parsed token-endpoint response body
       # @return [TokenResponse]
       # @raise [ProtocolError] invalid_response when the response has no

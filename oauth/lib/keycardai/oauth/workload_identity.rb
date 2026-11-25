@@ -11,6 +11,8 @@ module Keycardai
     #
     # Holds no shared secret and contributes no Basic header.
     class WorkloadIdentity
+      include PrintedForm
+
       attr_reader :client_id
 
       # @param source [#identity_token, #call] supplies the platform-signed
@@ -24,6 +26,14 @@ module Keycardai
       def initialize(source:, client_id: nil)
         @source = normalize_source(source)
         @client_id = client_id
+      end
+
+      # Shows the client ID and the source's identifier. Never calls the
+      # source, so it shows no platform token.
+      #
+      # @return [String]
+      def inspect
+        "#<#{self.class} client_id=#{@client_id.inspect}, source=#{source_identifier.inspect}>"
       end
 
       # Assertion-based authentication contributes no Basic header.

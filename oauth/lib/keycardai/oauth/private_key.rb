@@ -45,6 +45,8 @@ module Keycardai
     # private_key_jwt client assertions with it. WebIdentity composes this;
     # it is also usable standalone.
     class PrivateKeyManager
+      include PrintedForm
+
       ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
       DEFAULT_ASSERTION_LIFETIME = 300
 
@@ -60,6 +62,13 @@ module Keycardai
         @clock = clock
         @key = nil
         @mutex = Mutex.new
+      end
+
+      # Shows the key ID. Never shows the private key.
+      #
+      # @return [String]
+      def inspect
+        "#<#{self.class} key_id=#{@key_id.inspect}>"
       end
 
       # Load the persisted keypair, generating and storing one on first use.
