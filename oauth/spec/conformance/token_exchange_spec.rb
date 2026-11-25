@@ -157,6 +157,51 @@ RSpec.describe Keycardai::OAuth::TokenExchangeClient do
     end
   end
 
+  it "4f: rejects a request client_id with Basic before discovery" do
+    http = token_http
+    exchange = client(http, client_id: "configured", client_secret: "secret")
+
+    expect { exchange.exchange_token(subject_token: "at_subject", client_id: "request-id") }
+      .to raise_error(Keycardai::OAuth::ConfigurationError, /client_id.*HTTP Basic/)
+    expect(http.calls).to be_empty
+  end
+
+  [nil, "request-id"].each do |client_id|
+    it "4g: an explicit assertion suppresses Basic with client_id #{client_id.inspect}" do
+      http = token_http
+      credential = Keycardai::OAuth::ClientSecret.new("configured", "secret")
+      expect(credential).not_to receive(:prepare_token_exchange_request)
+      assertion_type = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+
+      client(http, credential: credential).exchange_token(
+        subject_token: "at_subject", client_assertion: "assertion",
+        client_assertion_type: assertion_type, client_id: client_id
+      )
+
+      call = token_call(http)
+      expect(call.params).to include("client_assertion" => "assertion", "client_assertion_type" => assertion_type)
+      expect(call.params["client_id"]).to eq(client_id)
+      expect(call.params.key?("client_id")).to eq(!client_id.nil?)
+      expect(call.headers).not_to have_key("Authorization")
+    end
+  end
+
+  it "4c: a workload identity credential adds no client_id to a request carrying its own assertion" do
+    http = token_http
+    source = -> { raise "the configured assertion source should not be called" }
+    credential = Keycardai::OAuth::WorkloadIdentity.new(source: source, client_id: "configured")
+    assertion_type = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+
+    client(http, credential: credential).exchange_token(
+      subject_token: "at_subject", client_assertion: "assertion", client_assertion_type: assertion_type
+    )
+
+    call = token_call(http)
+    expect(call.params).to include("client_assertion" => "assertion", "client_assertion_type" => assertion_type)
+    expect(call.params).not_to have_key("client_id")
+    expect(call.headers).not_to have_key("Authorization")
+  end
+
   it "5: parses a 2xx response into the token result" do
     response = client(token_http).exchange_token(subject_token: "at_subject")
 
