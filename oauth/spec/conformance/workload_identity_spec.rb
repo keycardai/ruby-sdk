@@ -141,6 +141,16 @@ RSpec.describe Keycardai::OAuth::WorkloadIdentity do
     expect(params).not_to have_key("client_id")
   end
 
+  it "4f: exposes a read-only client_id without calling the token source" do
+    source = -> { raise "source called" }
+    configured = described_class.new(source: source, client_id: "acr_123")
+    unconfigured = described_class.new(source: source)
+
+    expect(configured.client_id).to eq("acr_123")
+    expect(unconfigured.client_id).to be_nil
+    expect(configured).not_to respond_to(:client_id=)
+  end
+
   describe Keycardai::OAuth::FileTokenSource do
     it "5: uses an explicit token_file_path and validates it at construction" do
       Dir.mktmpdir do |dir|
