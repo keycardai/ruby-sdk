@@ -15,6 +15,15 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.11.1-keycardai-oauth (2026-11-25)
+
+
+- fix(keycardai-oauth): pass the explicit issuer to the device credential (#80)
+- When both issuer and metadata are given and match ignoring a trailing slash, DeviceAuthorizationClient now passes the issuer as supplied to the credential's client_authentication instead of metadata.issuer. A mismatch still raises ConfigurationError at construction.
+- Implements keycard-sdk-spec#140, specs/oauth-client/device-authorization.md unit row 35. SDK-124.
+- Co-authored-by: devin-ai-keycard <devin-ai@keycard.ai>
+Co-authored-by: Larry Osakwe <larry@keycard.ai>
+
 ## 0.11.0-keycardai-oauth (2026-11-25)
 
 
