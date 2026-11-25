@@ -138,6 +138,8 @@ module Keycardai
       def verify_against(issuers, token)
         claims = JWTVerifier.new(issuers: issuers, keyring: @keyring, audiences: @audiences,
                                  clock: @clock).verify(token)
+        audience = claims["aud"]
+        claims = claims.merge("aud" => [audience]) if audience.is_a?(String)
         AccessToken.new(token: token, claims: claims)
       end
     end
