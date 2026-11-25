@@ -186,7 +186,7 @@ RSpec.describe Keycardai::OAuth::TokenExchangeClient do
     end
   end
 
-  it "uses only the request's authentication fields for an explicit assertion with WorkloadIdentity" do
+  it "4c: a workload identity credential adds no client_id to a request carrying its own assertion" do
     http = token_http
     source = -> { raise "the configured assertion source should not be called" }
     credential = Keycardai::OAuth::WorkloadIdentity.new(source: source, client_id: "configured")

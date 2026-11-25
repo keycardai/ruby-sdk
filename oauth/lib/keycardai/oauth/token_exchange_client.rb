@@ -121,12 +121,17 @@ module Keycardai
         return post_token_request(params, issuer: issuer, authorization: nil) if overrides["client_assertion"]
 
         authorization = @credential&.authorization_header(issuer: issuer)
-        if overrides.key?("client_id") && authorization&.match?(/\ABasic\s/i)
-          raise ConfigurationError, "token exchange client_id cannot be sent with HTTP Basic"
-        end
-
+        reject_client_id_with_basic(overrides, authorization)
         params = with_assertion(params, issuer) if @credential && !authorization
         post_token_request(params, issuer: issuer, authorization: authorization)
+      end
+
+      # A request client_id never travels beside HTTP Basic: fail before any
+      # HTTP request, including discovery.
+      def reject_client_id_with_basic(overrides, authorization)
+        return unless overrides.key?("client_id") && authorization&.match?(/\ABasic\s/i)
+
+        raise ConfigurationError, "token exchange client_id cannot be sent with HTTP Basic"
       end
 
       def with_assertion(params, issuer)
