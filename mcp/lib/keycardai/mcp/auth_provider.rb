@@ -22,8 +22,13 @@ module Keycardai
       # @param audiences [String, Array<String>, nil] enforced on inbound tokens
       # @param http_client [#get, #post_form] pluggable transport
       # @param timeout [Numeric, nil]
+      # @raise [Keycardai::OAuth::ConfigurationError] explicitly empty audiences
       def initialize(zone_url:, credential: nil, client_id: nil, client_secret: nil, audiences: nil,
                      http_client: Keycardai::OAuth::HTTP::NetHTTPClient.new, timeout: nil)
+        if audiences.is_a?(Array) && audiences.empty?
+          raise Keycardai::OAuth::ConfigurationError, "audiences must not be empty"
+        end
+
         @zone_url = zone_url
         @credential = credential || (client_id ? Keycardai::OAuth::ClientSecret.new(client_id, client_secret) : nil)
         @audiences = audiences
