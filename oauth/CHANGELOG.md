@@ -15,6 +15,28 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.9.2-keycardai-oauth (2026-11-25)
+
+
+- fix(keycardai-oauth): use prepared authentication in token exchange (#77)
+- * fix(keycardai-oauth): use prepared authentication in token exchange
+- Co-Authored-By: Larry Osakwe <larry@keycard.ai>
+- * fix(keycardai-oauth): validate caller-supplied assertion type
+- Co-Authored-By: Larry Osakwe <larry@keycard.ai>
+- ---------
+- Co-authored-by: devin-ai-keycard <devin-ai@keycard.ai>
+Co-authored-by: Larry Osakwe <larry@keycard.ai>
+- fix(keycardai-oauth): reject explicitly empty verifier audiences (#76)
+- * fix(keycardai-oauth): reject explicitly empty verifier audiences
+- Co-Authored-By: Larry Osakwe <larry@keycard.ai>
+- * docs: refresh bearer conformance example counts
+- Co-Authored-By: Larry Osakwe <larry@keycard.ai>
+- * docs: count only row-numbered conformance examples
+- ---------
+- Co-authored-by: devin-ai-keycard <devin-ai@keycard.ai>
+Co-authored-by: Larry Osakwe <larry@keycard.ai>
+Co-authored-by: Larry Osakwe <23560354+Larry-Osakwe@users.noreply.github.com>
+
 ## 0.9.1-keycardai-oauth (2026-11-25)
 
 
