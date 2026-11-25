@@ -15,7 +15,7 @@ module Keycardai
     # @param code_challenge_method [String] the method the challenge was derived with
     # @param scope [String, nil] space-separated scopes
     # @param state [String, nil] CSRF state value
-    # @param resources [Array<String>] RFC 8707 resource indicators; each entry
+    # @param resources [Array<String>] RFC 8707 resource indicators; each distinct value
     #   becomes its own resource parameter, and the authorization server binds
     #   them into the authorization code at authorize time
     # @return [String] the authorize URL
@@ -32,10 +32,17 @@ module Keycardai
       }.compact
 
       uri = URI(authorization_endpoint)
-      query = URI.encode_www_form(params.to_a + Array(resources).map { |resource| ["resource", resource] })
-      uri.query = uri.query.nil? || uri.query.empty? ? query : "#{uri.query}&#{query}"
+      sdk_params = params.to_a + Array(resources).uniq.map { |resource| ["resource", resource] }
+      uri.query = merge_authorize_query(uri.query, sdk_params)
       uri.to_s
     end
+
+    def self.merge_authorize_query(query, sdk_params)
+      sdk_keys = sdk_params.map(&:first)
+      inherited = URI.decode_www_form(query.to_s).reject { |pair| sdk_keys.include?(pair.first) }
+      URI.encode_www_form(inherited + sdk_params)
+    end
+    private_class_method :merge_authorize_query
 
     # Exchange an authorization code for a token (RFC 6749 §4.1.3). A public
     # client sends its client_id in the body. A confidential client
