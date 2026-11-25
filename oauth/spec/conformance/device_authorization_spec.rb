@@ -250,24 +250,32 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
       end
     end
 
-    # The credential gets metadata.issuer, not the argument's spelling, so a
-    # multi-zone credential sees the zone's own issuer.
-    it "accepts an issuer that differs from the metadata's issuer only by a trailing slash, " \
-       "and authenticates with the metadata's issuer" do
-      http = zone_http
-      described_class.new(issuer: "https://acme.test/", metadata: parsed_metadata(zone.metadata(device: true)),
-                          credential: recording_credential, http_client: http).request_device_authorization
+    [
+      { name: "a trailing slash on the issuer", issuer: "https://acme.test/", metadata_issuer: "https://acme.test" },
+      { name: "a trailing slash on the metadata issuer", issuer: "https://acme.test",
+        metadata_issuer: "https://acme.test/" }
+    ].each do |example|
+      it "35: an issuer matching the metadata's with #{example[:name]} authenticates with the issuer unchanged" do
+        http = zone_http
+        metadata = parsed_metadata(zone.metadata(device: true).merge("issuer" => example[:metadata_issuer]))
+        described_class.new(issuer: example[:issuer], metadata: metadata,
+                            credential: recording_credential, http_client: http).request_device_authorization
 
-      expect(http.requests).to eq([zone.device_authorization_url])
-      expect(recording_credential.calls).to eq([["https://acme.test", zone.device_authorization_url]])
+        expect(http.requests).to eq([zone.device_authorization_url])
+        expect(recording_credential.calls).to eq([[example[:issuer], zone.device_authorization_url]])
+      end
     end
 
-    it "rejects an issuer that differs from the metadata's issuer" do
+    it "35: an issuer for another zone than the metadata's is a configuration error, " \
+       "with no credential authentication and no request" do
+      http = zone_http
       expect do
         described_class.new(issuer: "https://other.test", metadata: parsed_metadata(zone.metadata(device: true)),
-                            client_id: "cid")
+                            credential: recording_credential, http_client: http)
       end.to raise_error(Keycardai::OAuth::ConfigurationError,
                          "issuer https://other.test does not match the metadata issuer https://acme.test")
+      expect(recording_credential.calls).to be_empty
+      expect(http.calls).to be_empty
     end
   end
 
