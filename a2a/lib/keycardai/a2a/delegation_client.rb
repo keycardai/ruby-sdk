@@ -46,6 +46,20 @@ module Keycardai
         @wire = Wire.for(protocol_version)
       end
 
+      # Shows the token exchange client, which shows the issuer and the
+      # credential's class, and the protocol version.
+      #
+      # @return [String]
+      def inspect
+        "#<#{self.class} exchange=#{@exchange.inspect}, protocol_version=#{@wire.version.inspect}>"
+      end
+      alias to_s inspect
+
+      # Used by pp.
+      def pretty_print(printer)
+        printer.text(inspect)
+      end
+
       # Delegate a call to another agent: discover, exchange, invoke.
       #
       # @param target [String] the downstream agent's base URL
