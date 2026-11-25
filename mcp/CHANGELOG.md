@@ -14,6 +14,18 @@ protected-resource with path insertion, an RFC 8414 authorization-server proxy,
 and JWKS), and an AuthProvider whose `grant` middleware exchanges the caller's
 token per resource into an AccessContext. Wraps no MCP SDK.
 
+## 0.1.4-keycardai-mcp (2026-11-25)
+
+
+- fix(keycardai-mcp): reject an empty audience list at construction (#93)
+- * fix(keycardai-mcp): reject an empty audience list at construction
+- Co-Authored-By: Larry Osakwe <larry@keycard.ai>
+- * test(keycardai-mcp): cover a nonempty AuthProvider audience list end to end
+- ---------
+- Co-authored-by: devin-ai-keycard <devin-ai@keycard.ai>
+Co-authored-by: Larry Osakwe <larry@keycard.ai>
+Co-authored-by: Larry Osakwe <>
+
 ## 0.1.3-keycardai-mcp (2026-11-24)
 
 ## 0.1.2-keycardai-mcp (2026-10-12)
