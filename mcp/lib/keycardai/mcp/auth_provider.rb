@@ -57,7 +57,8 @@ module Keycardai
       # @return [String]
       def inspect
         credential = @credential.nil? ? "nil" : @credential.class.name || @credential.class.to_s
-        "#<#{self.class} zone_url=#{@zone_url.inspect}, audiences=#{@audiences.inspect}, credential=#{credential}>"
+        audiences = @resource_binding.audiences
+        "#<#{self.class} zone_url=#{@zone_url.inspect}, audiences=#{audiences.inspect}, credential=#{credential}>"
       end
       alias to_s inspect
 
