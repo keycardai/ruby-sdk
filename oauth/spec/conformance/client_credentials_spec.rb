@@ -127,6 +127,24 @@ RSpec.describe Keycardai::OAuth::ClientCredentialsClient do
     end
   end
 
+  it "rejects a request client_id beside a configured assertion credential before any request" do
+    http = token_http
+    credential = Keycardai::OAuth::WorkloadIdentity.new(source: -> { "platform-token" }, client_id: "app_123")
+
+    expect { client(http, credential: credential).request_token(client_id: "other") }
+      .to raise_error(Keycardai::OAuth::ConfigurationError)
+    expect(http.calls).to be_empty
+  end
+
+  it "fails an unconfigured zone on a multi-zone ClientSecret before discovery" do
+    http = token_http
+    credential = Keycardai::OAuth::ClientSecret.new({ zone.issuer => %w[cid csecret] })
+
+    expect { client(http, credential: credential).request_token(issuer: "https://unknown.example") }
+      .to raise_error(Keycardai::OAuth::ConfigurationError)
+    expect(http.calls).to be_empty
+  end
+
   it "rejects a body client_id on a Basic-authenticated client before any request" do
     http = token_http
 

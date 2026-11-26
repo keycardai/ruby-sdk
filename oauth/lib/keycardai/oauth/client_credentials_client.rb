@@ -68,17 +68,20 @@ module Keycardai
         if params["client_assertion"] || !@credential
           return post_token_request(params, issuer: issuer, authorization: nil)
         end
-        return post_with_header(params, issuer) unless @credential.respond_to?(:client_authentication)
+        # A ClientSecret resolves its Basic header without the token endpoint,
+        # so an unconfigured zone fails before any discovery request.
+        if @credential.is_a?(ClientSecret) || !@credential.respond_to?(:client_authentication)
+          return post_with_header(params, issuer)
+        end
 
         post_authenticated_credentials(params, issuer)
       end
 
       def post_authenticated_credentials(params, issuer)
-        reject_body_client_id(params) if @credential.is_a?(ClientSecret)
+        reject_request_client_fields(params)
         endpoint = token_endpoint(issuer)
         auth = @credential.client_authentication(issuer: issuer, endpoint: endpoint)
-        reject_body_client_id(params) if auth.headers["Authorization"]&.match?(/\ABasic\s/i)
-        form = params.except("client_id", "client_assertion_type").merge(auth.params)
+        form = params.merge(auth.params)
         post_token_form(endpoint, form, { "Accept" => "application/json" }.merge(auth.headers))
       end
 
@@ -92,6 +95,14 @@ module Keycardai
         return unless params["client_id"]
 
         raise ConfigurationError, "client_id is sent beside client_assertion, not with HTTP Basic"
+      end
+
+      # The configured credential supplies client_id and client_assertion_type,
+      # so a request value would be dropped or overridden: fail instead.
+      def reject_request_client_fields(params)
+        return unless params["client_id"] || params["client_assertion_type"]
+
+        raise ConfigurationError, "client_id and client_assertion_type are sent only beside a request client_assertion"
       end
     end
   end
