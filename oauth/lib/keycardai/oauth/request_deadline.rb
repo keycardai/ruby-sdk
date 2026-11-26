@@ -19,7 +19,7 @@ module Keycardai
         seconds = remaining
         return {} unless credential
 
-        parameters = credential.method(:client_authentication).parameters
+        parameters = credential_parameters(credential)
         options = {}
         options[:deadline] = Time.now + seconds if accepts_keyword?(parameters, :deadline)
         options[:timeout] = seconds if accepts_keyword?(parameters, :timeout)
@@ -27,6 +27,12 @@ module Keycardai
       end
 
       private
+
+      def credential_parameters(credential)
+        Kernel.instance_method(:method).bind_call(credential, :client_authentication).parameters
+      rescue NameError
+        []
+      end
 
       def accepts_keyword?(parameters, keyword)
         parameters.any? { |kind, name| name == keyword && %i[key keyreq].include?(kind) }

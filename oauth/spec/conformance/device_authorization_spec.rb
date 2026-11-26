@@ -501,6 +501,36 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
       expect(sole_call(http, zone.token_url).headers.fetch("Authorization")).to eq("Basic Y2lkOnNlY3JldA==")
     end
 
+    it "does not call a credential's own reflection method before authenticating" do
+      credential = recording_credential
+      credential.define_singleton_method(:method) { |_| raise "credential reflection must not run" }
+      http = zone_http(polls: [json_response(token_payload)])
+
+      token = client(http, client_id: nil, credential: credential, timeout: 0.2).poll_token(authorization)
+
+      expect(token.access_token).to eq("at_device")
+      expect(credential.calls).to eq([[zone.issuer, zone.token_url]])
+    end
+
+    it "authenticates through a proxy when method reflection cannot find client_authentication" do
+      delegate = recording_credential
+      proxy = Object.new
+      proxy.define_singleton_method(:respond_to?) do |name, *args|
+        name == :client_authentication || super(name, *args)
+      end
+      proxy.define_singleton_method(:method_missing) do |name, **options|
+        raise "unexpected method: #{name}" unless name == :client_authentication
+
+        delegate.client_authentication(**options)
+      end
+      http = zone_http(polls: [json_response(token_payload)])
+
+      token = client(http, client_id: nil, credential: proxy, timeout: 0.2).poll_token(authorization)
+
+      expect(token.access_token).to eq("at_device")
+      expect(delegate.calls).to eq([[zone.issuer, zone.token_url]])
+    end
+
     [
       { name: "authorization_pending", response: -> { oauth_error("authorization_pending") }, status: 400 },
       { name: "slow_down", response: -> { oauth_error("slow_down") }, status: 400 },
