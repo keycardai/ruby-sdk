@@ -151,6 +151,23 @@ RSpec.describe Keycardai::OAuth::HTTP::NetHTTPClient do
   end
 end
 
+RSpec.describe Keycardai::OAuth::HTTP::NetHTTPClient, "proxy selection" do
+  it "does not open a connection when the proxy lookup exhausts the request budget" do
+    stub_const("ENV", { "http_proxy" => "http://127.0.0.1:3128" })
+    elapsed = 0.0
+    allow(Process).to receive(:clock_gettime).and_call_original
+    allow(Process).to receive(:clock_gettime).with(Process::CLOCK_MONOTONIC) { elapsed }
+    expect(IPSocket).to receive(:getaddress).with("zone.example") do
+      elapsed = 0.25
+      "192.0.2.1"
+    end
+    expect(TCPSocket).not_to receive(:open)
+
+    expect { described_class.new.get("http://zone.example/a", timeout: 0.2) }
+      .to raise_error(Keycardai::OAuth::NetworkError, "request deadline exceeded")
+  end
+end
+
 # These tests use the real Net::HTTP, which decompresses a gzip body while it
 # reads it.
 RSpec.describe Keycardai::OAuth::HTTP::NetHTTPClient, "response bodies" do

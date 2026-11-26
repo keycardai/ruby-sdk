@@ -51,6 +51,9 @@ module Keycardai
         private
 
         def connect
+          # Proxy selection can resolve the destination before Net::HTTP opens
+          # a socket. Cache the selection before setting the connect budget.
+          proxy_uri if proxy_from_env?
           apply_deadline
           super
           bound_socket(@socket.io)
