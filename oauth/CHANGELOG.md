@@ -15,6 +15,20 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.13.0-keycardai-oauth (2026-11-26)
+
+
+- feat(keycardai-oauth): discover the application credential from the environment (SDK-6) (#99)
+- * feat(keycardai-oauth): discover the application credential from the environment (SDK-6)
+- Implements keycardai/keycard-sdk-spec credential-discovery.md v2
+- Refs SDK-6
+- Co-Authored-By: Larry Osakwe <larry@keycard.ai>
+- * docs: count token revocation in the conformance summary
+- ---------
+- Co-authored-by: devin-ai-keycard <devin-ai@keycard.ai>
+Co-authored-by: Larry Osakwe <larry@keycard.ai>
+Co-authored-by: Larry Osakwe <23560354+Larry-Osakwe@users.noreply.github.com>
+
 ## 0.12.0-keycardai-oauth (2026-11-25)
 
 
