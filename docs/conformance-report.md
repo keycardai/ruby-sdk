@@ -60,7 +60,7 @@ which are labelled without a row number.
 
 | Spec | Suite | Examples |
 | --- | --- | --- |
-| `a2a/a2a-delegation` | `a2a_delegation_spec.rb` | 7 |
+| `a2a/a2a-delegation` | `a2a_delegation_spec.rb` | 27 |
 
 ## Live-zone results
 

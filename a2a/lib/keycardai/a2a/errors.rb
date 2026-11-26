@@ -6,6 +6,13 @@ module Keycardai
     # missing the required name.
     class DiscoveryError < Keycardai::Error; end
 
+    # An invocation reply exceeds the decoded peer limit.
+    class InvocationResponseBodyTooLargeError < OAuth::ResponseBodyTooLargeError
+      def retryable?
+        !(200..299).cover?(status) && super
+      end
+    end
+
     # The JSON-RPC invocation returned an HTTP error or a JSON-RPC error
     # response. Carries the JSON-RPC error payload when one was returned.
     class InvocationError < Keycardai::Error
