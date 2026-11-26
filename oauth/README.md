@@ -17,15 +17,42 @@ Capabilities:
 - Client credentials grant (RFC 6749 §4.4)
 - Authorization code + PKCE, including the challenge-driven loopback flow (RFC 8252)
 - Device authorization grant (RFC 8628)
+- Token revocation (RFC 7009)
 - Dynamic client registration (RFC 7591)
 - Authorization server discovery (RFC 8414), including the OIDC Discovery 1.0 §3 endpoints
 - UserInfo: the signed-in user's identity claims (OIDC Core 1.0 §5.3)
 - JWT signing and verification, JWKS keyring with caching
 - Application credentials: ClientSecret (incl. multi-zone), WebIdentity (RFC 7523),
-  WorkloadIdentity with pluggable identity token sources
+  WorkloadIdentity with pluggable identity token sources, and opt-in discovery
 - AccessContext: the non-throwing per-request container for delegated tokens
 
 ## Quickstart
+
+### Discover an application credential
+
+```ruby
+require "keycardai/oauth"
+
+credential = Keycardai::OAuth.discover_application_credential
+```
+
+Discovery runs only when called. It reads the process environment by default,
+or an explicit string-keyed mapping passed as `env:`. It discovers a client
+secret from `KEYCARD_CLIENT_ID` and `KEYCARD_CLIENT_SECRET`, workload identity
+from the first non-empty variable in the `FileTokenSource` discovery list, or
+web identity from `KEYCARD_WEB_IDENTITY_KEY_STORAGE_DIR`.
+
+Set `KEYCARD_APPLICATION_CREDENTIAL_TYPE` to `client_secret`,
+`workload_identity`, or `web_identity` to choose one when multiple types are
+configured. `eks_workload_identity` is a deprecated alias for
+`workload_identity`. Selecting `web_identity` without a storage directory uses
+the WebIdentity default, and `web_identity_server_name:` supplies its key name.
+A discovered WebIdentity has no registered client id; construct it explicitly
+with `client_id:` for operations that sign client assertions.
+
+Discovery configuration errors raise `Keycardai::OAuth::CredentialDiscoveryError`
+with a symbolic `reason` and a `resolvable` list. Pass the zone URL separately;
+credential discovery does not read `KEYCARD_ZONE_URL`.
 
 ### Verify an inbound token
 
@@ -131,6 +158,25 @@ here. A `WorkloadIdentity` needs `client_id:` (the public ID of a v2 token
 credential) for refresh, the code exchange, `authenticate` and device
 authorization; without it these raise `ConfigurationError` before any request.
 A credential of your own must respond to `client_authentication`.
+
+### Revoke a token
+
+Revoking a Keycard refresh token revokes its session. Use the same client
+authentication as for refresh: a public client ID, client ID and secret, or
+`credential:`.
+
+```ruby
+Keycardai::OAuth.revoke_token(
+  "https://your-zone.keycard.cloud",
+  token: stored_refresh_token,
+  client_id: ENV.fetch("KEYCARD_CLIENT_ID"),
+  client_secret: ENV["KEYCARD_CLIENT_SECRET"], # omit for a public client
+)
+```
+
+Pass `metadata:` to reuse discovery results. The server must advertise a
+`revocation_endpoint`. The operation returns `nil` on HTTP 200, even for
+unknown, expired, or already revoked tokens. It does not retry.
 
 ### Sign in a device with no browser
 

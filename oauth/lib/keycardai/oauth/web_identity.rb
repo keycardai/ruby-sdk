@@ -14,8 +14,10 @@ module Keycardai
     # Holds no shared secret and contributes no Basic header. Never reads
     # environment variables; the caller supplies storage configuration.
     class WebIdentity
-      # @param client_id [String] the registered OAuth client id, signed as
-      #   the assertion's iss and sub
+      include PrintedForm
+
+      # @param client_id [String, nil] the registered OAuth client id, signed
+      #   as the assertion's iss and sub; required for client authentication
       # @param server_name [String, nil] sanitized into the key id when no
       #   key_id is given
       # @param key_id [String, nil] explicit key id (the JWT kid); otherwise
@@ -23,11 +25,8 @@ module Keycardai
       # @param storage [#load, #store, nil] pluggable keypair storage
       # @param storage_dir [String, nil] directory for the default file store
       # @param clock [#call] returns the current Time; override in tests
-      # @raise [ConfigurationError] missing client_id
-      def initialize(client_id:, server_name: nil, key_id: nil, storage: nil, storage_dir: nil,
+      def initialize(client_id: nil, server_name: nil, key_id: nil, storage: nil, storage_dir: nil,
                      clock: -> { Time.now })
-        raise ConfigurationError, "WebIdentity requires a client_id" if client_id.nil? || client_id.empty?
-
         @client_id = client_id
         storage ||= FilePrivateKeyStorage.new(dir: storage_dir || FilePrivateKeyStorage::DEFAULT_DIR)
         @key_manager = PrivateKeyManager.new(
@@ -39,6 +38,13 @@ module Keycardai
       # @return [String] the key id used as the assertion's kid
       def key_id
         @key_manager.key_id
+      end
+
+      # Shows the client ID and the key ID. Never shows the private key.
+      #
+      # @return [String]
+      def inspect
+        "#<#{self.class} client_id=#{@client_id.inspect}, key_id=#{key_id.inspect}>"
       end
 
       # Assertion-based authentication contributes no Basic header.
@@ -59,40 +65,42 @@ module Keycardai
       # @param scope [String, nil]
       # @param issuer [String, nil] unused; part of the Credential interface
       # @return [Hash]
-      # @raise [ConfigurationError] when token_endpoint is missing
+      # @raise [ConfigurationError] when the client_id or token_endpoint is missing
       def prepare_token_exchange_request(subject_token:, token_endpoint: nil, resource: nil,
                                          audience: nil, scope: nil, issuer: nil)
         if token_endpoint.nil? || token_endpoint.empty?
           raise ConfigurationError, "WebIdentity requires the token_endpoint as the assertion audience"
         end
 
-        {
-          "grant_type" => GrantType::TOKEN_EXCHANGE,
-          "subject_token" => subject_token,
-          "subject_token_type" => TokenType::ACCESS_TOKEN,
-          "resource" => resource,
-          "audience" => audience,
-          "scope" => scope
-        }.compact.merge(client_authentication(issuer: issuer, endpoint: token_endpoint).params)
+        authentication = client_authentication(issuer: issuer, endpoint: token_endpoint)
+        TokenExchangeForm.build(subject_token: subject_token, resource: resource, audience: audience, scope: scope,
+                                authentication: authentication.params)
       end
 
       # Client authentication for one request: a newly signed client assertion
-      # and its type, as form fields. The assertion's aud is the endpoint the
-      # request goes to. A Keycard zone rejects any other aud with
-      # invalid_client. Each call signs a new assertion with a new jti.
+      # and its type, as form fields. The assertion's aud is the endpoint
+      # input. Each call signs a new assertion with a new jti.
       #
       # @param issuer [String, nil] unused; part of the Credential interface
-      # @param endpoint [String] the URL the request goes to
+      # @param endpoint [String] the assertion audience URL
       # @return [ClientAuthentication]
-      # @raise [ConfigurationError] when endpoint is missing
+      # @raise [ConfigurationError] when the client_id or endpoint is missing
       def client_authentication(issuer:, endpoint:)
         if endpoint.nil? || endpoint.empty?
           raise ConfigurationError, "WebIdentity requires the endpoint URL as the assertion audience"
         end
 
+        check_client_authentication
         assertion = @key_manager.create_client_assertion(client_id: @client_id, audience: endpoint)
         ClientAuthentication.new(params: { "client_assertion" => assertion,
                                            "client_assertion_type" => PrivateKeyManager::ASSERTION_TYPE })
+      end
+
+      # @raise [ConfigurationError] when the client_id is missing
+      def check_client_authentication
+        return unless @client_id.nil? || @client_id.empty?
+
+        raise ConfigurationError, "WebIdentity requires a client_id for client authentication"
       end
 
       # The public JWKS the authorization server verifies assertions against.

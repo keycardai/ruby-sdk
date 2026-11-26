@@ -51,6 +51,12 @@ inbound token for one scoped to B, then send JSON-RPC `SendMessage` with the
 exchanged token as the bearer credential. The user stays the subject across the
 hop; agent B verifies a token whose `sub` is the original user, not this agent.
 
+Delegation only accepts invocation endpoints on the target's origin by default.
+For a trusted gateway on another origin, pass
+`trusted_endpoint_origins: ["https://gateway.example.com"]` to the client.
+An untrusted endpoint raises a non-retryable `Keycardai::A2A::DiscoveryError`
+before token exchange.
+
 ### Protocol version
 
 The client speaks A2A protocol 1.0 by default: `SendMessage`, an `A2A-Version:
@@ -85,3 +91,8 @@ card["url"]
 Cards are cached for 15 minutes by default (`cache_ttl:`). `refresh` forces a
 fetch, `clear_cache` drops everything. Passing the same `ServiceDiscovery` into
 `DelegationClient.new(discovery:)` shares one cache across both paths.
+
+Default HTTP transports limit decoded agent cards and invocation replies to
+64 MiB. Pass `max_peer_response_bytes:` to `DelegationClient.new` or
+`ServiceDiscovery.new` to set a positive byte limit. The setting does not
+change the 1 MiB token-exchange limit or cap a supplied HTTP client.

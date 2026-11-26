@@ -14,6 +14,8 @@ module Keycardai
     # claims omit iss and the signer carries an issuer, iss is filled in; a
     # caller-supplied iss is preserved.
     class JWTSigner
+      include PrintedForm
+
       ALGORITHM = "RS256"
 
       # @param key [OpenSSL::PKey::RSA] the RSA private signing key
@@ -29,6 +31,13 @@ module Keycardai
         @key = key
         @kid = kid
         @issuer = issuer
+      end
+
+      # Shows the key ID and the default issuer. Never shows the private key.
+      #
+      # @return [String]
+      def inspect
+        "#<#{self.class} kid=#{@kid.inspect}, issuer=#{@issuer.inspect}>"
       end
 
       # Sign a claim set into a compact JWS (header.payload.signature).
