@@ -62,7 +62,7 @@ module Keycardai
         raise
       rescue StandardError => e
         raise WorkloadIdentityRuntimeError.new("identity token source failed: #{e.message}",
-                                               source: source_identifier_for(source))
+                                               source: "custom")
       end
 
       def self.source_identifier_for(source)

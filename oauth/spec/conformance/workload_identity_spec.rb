@@ -76,6 +76,32 @@ RSpec.describe Keycardai::OAuth::WorkloadIdentity do
     expect(prepare(credential)["client_assertion"]).to eq("lambda-token")
   end
 
+  [nil, Keycardai::OAuth::HTTPError.new("rate limited", status: 429)].each do |http_error|
+    it "23: preserves the plain custom error without inferring retryability (#{http_error&.status.inspect})" do
+      failure = StandardError.new("source unavailable")
+      source = rotating_source_class.new("unused")
+      allow(source).to receive(:identity_token) { raise failure, cause: http_error }
+      expect { prepare(described_class.new(source: source)) }
+        .to raise_error(Keycardai::OAuth::WorkloadIdentityRuntimeError) { |e|
+          expect(e.source).to eq("custom")
+          expect(e.cause).to be(failure)
+          expect(e).not_to be_retryable
+        }
+    end
+  end
+
+  it "24: preserves an explicitly marked custom error" do
+    cause = IOError.new("source unavailable")
+    marked = Keycardai::OAuth::WorkloadIdentityRuntimeError.new("transient", source: "test-source", retryable: true)
+    credential = described_class.new(source: -> { raise marked, cause: cause })
+    expect { prepare(credential) }.to raise_error(Keycardai::OAuth::WorkloadIdentityRuntimeError) { |e|
+      expect(e).to be(marked)
+      expect(e.source).to eq("test-source")
+      expect(e.cause).to be(cause)
+      expect(e).to be_retryable
+    }
+  end
+
   it "4a: sends client_id as a form parameter when configured, and omits it otherwise" do
     with_id = described_class.new(source: rotating_source_class.new("t"), client_id: "app_123")
     without_id = described_class.new(source: rotating_source_class.new("t"))
@@ -152,6 +178,24 @@ RSpec.describe Keycardai::OAuth::WorkloadIdentity do
   end
 
   describe Keycardai::OAuth::FileTokenSource do
+    { 21 => ->(path) { File.write(path, "") }, 22 => ->(path) { File.unlink(path) } }.each do |row, invalidate|
+      it "#{row}: distinguishes projected token failures at construction and request time" do
+        Dir.mktmpdir do |dir|
+          path = File.join(dir, "token")
+          File.write(path, "valid-token")
+          source = described_class.new(token_file_path: path, env: {})
+          invalidate.call(path)
+          expect { source.identity_token }
+            .to raise_error(Keycardai::OAuth::WorkloadIdentityRuntimeError) { |e|
+              expect(e.source).to eq("file")
+              expect(e).to be_retryable
+            }
+          expect { described_class.new(token_file_path: path, env: {}) }
+            .to raise_error(Keycardai::OAuth::WorkloadIdentityConfigurationError)
+        end
+      end
+    end
+
     it "5: uses an explicit token_file_path and validates it at construction" do
       Dir.mktmpdir do |dir|
         path = File.join(dir, "token")
@@ -161,6 +205,16 @@ RSpec.describe Keycardai::OAuth::WorkloadIdentity do
         expect(source.identity_token).to eq("file-token")
 
         expect { described_class.new(token_file_path: File.join(dir, "missing"), env: {}) }
+          .to raise_error(Keycardai::OAuth::WorkloadIdentityConfigurationError) { |e| expect(e.source).to eq("file") }
+      end
+    end
+
+    it "5: rejects a token file with invalid encoding at construction" do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "token")
+        File.binwrite(path, "\xFF")
+
+        expect { described_class.new(token_file_path: path, env: {}) }
           .to raise_error(Keycardai::OAuth::WorkloadIdentityConfigurationError) { |e| expect(e.source).to eq("file") }
       end
     end
@@ -190,6 +244,17 @@ RSpec.describe Keycardai::OAuth::WorkloadIdentity do
   end
 
   describe Keycardai::OAuth::GCPMetadataTokenSource do
+    ["", '{"error":"invalid_client"}'].each do |body|
+      it "20: classifies the GCP 429 independently of the body (#{body.inspect})" do
+        http = FakeHTTPClient.new { |_url| Keycardai::OAuth::HTTP::Response.new(status: 429, headers: {}, body: body) }
+        source = described_class.new(audience: "aud", http_client: http)
+        expect { source.identity_token }.to raise_error(Keycardai::OAuth::WorkloadIdentityRuntimeError) { |e|
+          expect(e.source).to eq("gcp-metadata")
+          expect(e).to be_retryable
+        }
+      end
+    end
+
     it "8: fetches with the identity path, audience, format=full, and Metadata-Flavor header" do
       http = FakeHTTPClient.new { |_url| Keycardai::OAuth::HTTP::Response.new(status: 200, headers: {}, body: "gcp-token") }
       source = described_class.new(audience: "https://acme.test", metadata_url: "http://metadata.test",
@@ -229,6 +294,17 @@ RSpec.describe Keycardai::OAuth::WorkloadIdentity do
   end
 
   describe Keycardai::OAuth::FlyTokenSource do
+    ["", '{"error":"invalid_client"}'].each do |body|
+      it "20: classifies the Fly 429 independently of the body (#{body.inspect})" do
+        source = described_class.new
+        allow(source).to receive(:post_over_socket).and_return([429, body])
+        expect { source.identity_token }.to raise_error(Keycardai::OAuth::WorkloadIdentityRuntimeError) { |e|
+          expect(e.source).to eq("fly")
+          expect(e).to be_retryable
+        }
+      end
+    end
+
     it "9: POSTs {\"aud\": audience} over the overridden Unix socket path" do
       Dir.mktmpdir do |dir|
         socket_path = File.join(dir, "fly.sock")

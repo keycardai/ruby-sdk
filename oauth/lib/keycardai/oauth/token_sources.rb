@@ -36,11 +36,14 @@ module Keycardai
       # @raise [WorkloadIdentityRuntimeError] unreadable or empty file
       def identity_token
         token = File.read(@path).strip
-        raise WorkloadIdentityRuntimeError.new("token file #{@path} is empty", source: "file") if token.empty?
+        if token.empty?
+          raise WorkloadIdentityRuntimeError.new("token file #{@path} is empty", source: "file", retryable: true)
+        end
 
         token
       rescue SystemCallError => e
-        raise WorkloadIdentityRuntimeError.new("token file #{@path} is unreadable: #{e.message}", source: "file")
+        raise WorkloadIdentityRuntimeError.new("token file #{@path} is unreadable: #{e.message}",
+                                               source: "file", retryable: true)
       end
 
       def source_identifier
@@ -61,9 +64,11 @@ module Keycardai
       end
 
       def validate_file
-        return if File.file?(@path) && !File.empty?(@path)
+        return if File.file?(@path) && !File.read(@path).strip.empty?
 
         raise WorkloadIdentityConfigurationError.new("token file #{@path} is missing or empty", source: "file")
+      rescue SystemCallError, ArgumentError, EncodingError => e
+        raise WorkloadIdentityConfigurationError.new("token file #{@path} is unreadable: #{e.message}", source: "file")
       end
     end
 
