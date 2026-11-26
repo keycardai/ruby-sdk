@@ -58,7 +58,44 @@ RSpec.describe "A2A delegation" do
     transport = http(card_response: http_json({ "description" => "anonymous" }))
     discovery = Keycardai::A2A::ServiceDiscovery.new(http_client: transport)
 
-    expect { discovery.get_card(target) }.to raise_error(Keycardai::A2A::DiscoveryError)
+    expect { discovery.get_card(target) }.to raise_error(Keycardai::A2A::DiscoveryError) { |error|
+      expect(error.retryable?).to be(false)
+    }
+  end
+
+  describe "agent card discovery retryability" do
+    { 403 => false, 429 => true, 503 => true }.each do |status, retryable|
+      it "classifies HTTP #{status} as retryable: #{retryable}" do
+        transport = http(card_response: http_json({}, status: status))
+        discovery = Keycardai::A2A::ServiceDiscovery.new(http_client: transport)
+
+        expect { discovery.get_card(target) }.to raise_error(Keycardai::A2A::DiscoveryError) { |error|
+          expect(error.retryable?).to be(retryable)
+        }
+      end
+    end
+
+    it "classifies wrapped network failures as retryable" do
+      transport = FakeHTTPClient.new { raise Keycardai::OAuth::NetworkError, "connection refused" }
+      discovery = Keycardai::A2A::ServiceDiscovery.new(http_client: transport)
+
+      expect { discovery.get_card(target) }.to raise_error(Keycardai::A2A::DiscoveryError) { |error|
+        expect(error.retryable?).to be(true)
+      }
+    end
+
+    it "classifies invalid JSON as non-retryable" do
+      response = Keycardai::OAuth::HTTP::Response.new(status: 200, headers: {}, body: "{")
+      discovery = Keycardai::A2A::ServiceDiscovery.new(http_client: http(card_response: response))
+
+      expect { discovery.get_card(target) }.to raise_error(Keycardai::A2A::DiscoveryError) { |error|
+        expect(error.retryable?).to be(false)
+      }
+    end
+
+    it "defaults to non-retryable" do
+      expect(Keycardai::A2A::DiscoveryError.new.retryable?).to be(false)
+    end
   end
 
   it "3: a valid delegation exchanges the user token for the target and invokes with it" do
@@ -168,7 +205,7 @@ RSpec.describe "A2A delegation" do
     [
       ["12: invokes on the same origin", "https://agent-b.test/rpc", {}],
       ["14: invokes on an allowlisted origin", "https://gateway.test/rpc",
-       { trusted_endpoint_origins: ["HTTPS://GATEWAY.test:443"] }],
+       { trusted_endpoint_origins: ["HTTPS://GATEWAY.test:443/"] }],
       ["15: matches the explicit default port", "https://agent-b.test:443/rpc", {}],
       ["15b: matches scheme and host case-insensitively", "HTTPS://Agent-B.Test/rpc", {}]
     ].each do |name, endpoint, opts|
@@ -199,6 +236,16 @@ RSpec.describe "A2A delegation" do
             expect(e.retryable?).to be(false)
           }
         expect(transport.calls.map(&:url)).to eq([urls[:agent_card]])
+      end
+    end
+
+    %w[
+      https://gateway.test/rpc https://gateway.test/%2f https://gateway.test/?key=value https://gateway.test/?
+      https://gateway.test/#part https://gateway.test/# https://user@gateway.test https://@gateway.test
+    ].each do |origin|
+      it "rejects the non-bare trusted origin #{origin}" do
+        expect { client(http, trusted_endpoint_origins: [origin]) }
+          .to raise_error(Keycardai::OAuth::ConfigurationError, /expected a bare HTTP or HTTPS origin/)
       end
     end
 

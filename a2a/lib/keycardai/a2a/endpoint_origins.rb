@@ -8,7 +8,8 @@ module Keycardai
     class EndpointOrigins
       def initialize(trusted)
         @trusted = trusted.map do |url|
-          origin(url) || raise(OAuth::ConfigurationError, "invalid trusted endpoint origin: #{url.inspect}")
+          trusted_origin(url) ||
+            raise(OAuth::ConfigurationError, "invalid trusted endpoint origin: expected a bare HTTP or HTTPS origin")
         end.freeze
       end
 
@@ -25,6 +26,10 @@ module Keycardai
       end
 
       private
+
+      def trusted_origin(url)
+        origin(url) if url.is_a?(String) && url.match?(%r{\Ahttps?://[^\s/?#@\\]+/?\z}i)
+      end
 
       def origin(url)
         uri = URI.parse(url)

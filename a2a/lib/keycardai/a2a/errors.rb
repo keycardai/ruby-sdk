@@ -5,7 +5,7 @@ module Keycardai
     # The target agent's card cannot be fetched, is not valid JSON, or is
     # missing the required name, or its invocation endpoint is refused.
     class DiscoveryError < Keycardai::Error
-      def initialize(message = nil, retryable: nil)
+      def initialize(message = nil, retryable: false)
         super(message)
         @retryable = retryable
       end
