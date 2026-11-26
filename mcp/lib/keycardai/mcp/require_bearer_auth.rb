@@ -34,7 +34,7 @@ module Keycardai
       # @param allow_any_audience [Boolean] explicit opt-out from audience validation
       # @param audiences [String, Array<String>, nil] accepted audiences in multi_resource or legacy mode
       # @param zone_resolver [#call, nil] request-only zone selector `(env) -> zone_id` for per-zone mode
-      # @param http_client [#get, #post_form, nil] transport for an internally constructed verifier and introspection
+      # @param http_client [#get, nil] transport for a constructed verifier; introspection also requires #post_form
       # @param introspect [Boolean] check token status after local verification and scope checks
       # @param credential [#client_authentication, nil] credential of the Application that owns the Resource
       # @param timeout [Numeric, nil] introspection HTTP request timeout in seconds

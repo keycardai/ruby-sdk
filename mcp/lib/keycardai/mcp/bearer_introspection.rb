@@ -9,6 +9,10 @@ module Keycardai
         validate!(verifier, credential)
         @credential = credential
         @http_client = http_client || Keycardai::OAuth::HTTP::NetHTTPClient.new
+        unless @http_client.respond_to?(:get) && @http_client.respond_to?(:post_form)
+          raise Keycardai::OAuth::ConfigurationError, "introspection requires an HTTP client with get and post_form"
+        end
+
         @timeout = timeout
         @reported_errors = {}
         @mutex = Mutex.new

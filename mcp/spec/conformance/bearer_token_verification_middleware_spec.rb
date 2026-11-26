@@ -757,6 +757,16 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
 
       expect(gate(timeout: 2).call(bearer_env(token)).first).to eq(200)
     end
+
+    it "rejects an HTTP client missing an introspection method only when introspection is enabled" do
+      get_only = double("GET-only HTTP client", get: nil)
+      post_only = double("POST-only HTTP client", post_form: nil)
+
+      [get_only, post_only].each do |client|
+        expect { gate(http_client: client) }.to raise_error(Keycardai::OAuth::ConfigurationError, /get and post_form/)
+      end
+      expect(middleware(http_client: get_only).call(bearer_env(token)).first).to eq(200)
+    end
   end
 
   it "Integration 2: token issued for another resource is 401 when resource_identifier is configured" do
