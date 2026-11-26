@@ -47,8 +47,8 @@ Set `KEYCARD_APPLICATION_CREDENTIAL_TYPE` to `client_secret`,
 configured. `eks_workload_identity` is a deprecated alias for
 `workload_identity`. Selecting `web_identity` without a storage directory uses
 the WebIdentity default, and `web_identity_server_name:` supplies its key name.
-A discovered WebIdentity has no registered client id; construct it explicitly
-with `client_id:` for operations that sign client assertions.
+A discovered WebIdentity uses a non-empty `KEYCARD_CLIENT_ID` as its registered
+client id. Discovery succeeds without it, but client authentication requires it.
 
 Discovery configuration errors raise `Keycardai::OAuth::CredentialDiscoveryError`
 with a symbolic `reason` and a `resolvable` list. Pass the zone URL separately;
