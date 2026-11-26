@@ -15,6 +15,19 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.16.1-keycardai-oauth (2026-11-26)
+
+
+- fix(keycardai-oauth): attach KEYCARD_CLIENT_ID to a discovered web identity credential (#125)
+- * fix(keycardai-oauth): attach KEYCARD_CLIENT_ID to a discovered web identity credential
+- Co-Authored-By: Devin AI <158243242+devin-ai-integration[bot]@users.noreply.github.com>
+- * docs: update credential discovery conformance counts for rows 23 and 24
+- Co-Authored-By: Devin AI <158243242+devin-ai-integration[bot]@users.noreply.github.com>
+- ---------
+- Co-authored-by: devin-ai-keycard <devin-ai@keycard.ai>
+Co-authored-by: Devin AI <158243242+devin-ai-integration[bot]@users.noreply.github.com>
+Co-authored-by: Larry Osakwe <23560354+Larry-Osakwe@users.noreply.github.com>
+
 ## 0.16.0-keycardai-oauth (2026-11-26)
 
 
