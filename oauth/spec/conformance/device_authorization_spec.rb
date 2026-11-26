@@ -465,6 +465,25 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
                 %w[client_id cid]])
     end
 
+    it "7: a forwarding credential wrapper does not add undeclared timeout keywords" do
+      wrapper = Class.new do
+        def initialize(credential)
+          @credential = credential
+        end
+
+        def client_authentication(...)
+          @credential.client_authentication(...)
+        end
+      end
+      credential = wrapper.new(Keycardai::OAuth::ClientSecret.new("cid", "secret"))
+      http = zone_http(polls: [json_response(token_payload)])
+
+      token = client(http, client_id: nil, credential: credential, timeout: 0.2).poll_token(authorization)
+
+      expect(token.access_token).to eq("at_device")
+      expect(sole_call(http, zone.token_url).headers.fetch("Authorization")).to eq("Basic Y2lkOnNlY3JldA==")
+    end
+
     [
       { name: "authorization_pending", response: -> { oauth_error("authorization_pending") }, status: 400 },
       { name: "slow_down", response: -> { oauth_error("slow_down") }, status: 400 },

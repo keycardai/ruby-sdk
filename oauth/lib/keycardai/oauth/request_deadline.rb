@@ -22,15 +22,11 @@ module Keycardai
         parameters = credential.method(:client_authentication).parameters
         options = {}
         options[:deadline] = Time.now + seconds if accepts_keyword?(parameters, :deadline)
-        options[:timeout] = seconds if passes_timeout?(parameters, options)
+        options[:timeout] = seconds if accepts_keyword?(parameters, :timeout)
         options
       end
 
       private
-
-      def passes_timeout?(parameters, options)
-        accepts_keyword?(parameters, :timeout) || (options.empty? && parameters.any? { |kind, _| kind == :keyrest })
-      end
 
       def accepts_keyword?(parameters, keyword)
         parameters.any? { |kind, name| name == keyword && %i[key keyreq].include?(kind) }
