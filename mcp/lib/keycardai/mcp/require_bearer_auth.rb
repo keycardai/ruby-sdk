@@ -49,8 +49,7 @@ module Keycardai
         @verifier, @resource_binding = resolve_verifier_and_binding(
           verifier: verifier, base_issuer: issuer || zone_url, http_client: http_client,
           mode_options: {
-            resource_identifier: resource_identifier,
-            resource_identifiers_by_zone: resource_identifiers_by_zone,
+            resource_identifier: resource_identifier, resource_identifiers_by_zone: resource_identifiers_by_zone,
             multi_resource: multi_resource, allow_any_audience: allow_any_audience, audiences: audiences
           }
         )
@@ -63,7 +62,7 @@ module Keycardai
 
       def call(env)
         upstream = env[ENV_RESOURCE_BINDING]
-        binding = effective_binding(env)
+        binding = @resource_binding || upstream
         env[ENV_RESOURCE_BINDING] = binding if binding
         if env[ENV_AUTH_INFO] && reuse_upstream_auth?(upstream)
           return enforce_scopes(env, env[ENV_AUTH_INFO], binding, env[ENV_ZONE_ID])
@@ -76,17 +75,13 @@ module Keycardai
       private
 
       def call_per_zone(env, binding)
-        zone_id = @zone_resolver.call(env)
+        zone_id = @zone_resolver ? @zone_resolver.call(env) : env[ENV_ZONE_ID]
         unless zone_id && binding.zone_identifiers.key?(zone_id)
           return RackSupport.challenge_response(env, status: 401, binding: binding, include_metadata: false)
         end
 
         env[ENV_ZONE_ID] = zone_id
         authenticate_request(env, binding, zone_id)
-      end
-
-      def effective_binding(env)
-        @resource_binding || env[ENV_RESOURCE_BINDING]
       end
 
       # The gate reuses upstream auth only for a compatible binding and when
@@ -115,7 +110,7 @@ module Keycardai
       end
 
       def authorize(env, token, binding, zone_id)
-        access_token, failure = verify(token, zone_id)
+        access_token, failure = verify(token, zone_id, env[ENV_AUTH_INFO]&.issuer)
         if failure.nil? && !RackSupport.audience_matches?(access_token, binding, zone_id)
           failure = "token audience does not match the resource"
         end
@@ -151,8 +146,13 @@ module Keycardai
       ].freeze
       private_constant :UNAVAILABLE_ERRORS
 
-      def verify(token, zone_id)
-        token_info = zone_id ? @verifier.verify_token_for_zone(token, zone_id) : @verifier.verify_token(token)
+      def verify(token, zone_id, upstream_issuer)
+        pinned = zone_id && @resource_binding
+        token_info = pinned ? @verifier.verify_token_for_zone(token, zone_id) : @verifier.verify_token(token)
+        if zone_id && !pinned && token_info.issuer != upstream_issuer
+          return [nil, "token issuer does not match the upstream zone"]
+        end
+
         [token_info, nil]
       rescue *UNAVAILABLE_ERRORS
         [nil, :unavailable]

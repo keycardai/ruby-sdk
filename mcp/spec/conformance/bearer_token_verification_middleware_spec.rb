@@ -672,6 +672,22 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
       expect(probe.ran?).to be(false)
     end
 
+    it "introspects a stacked route using the zone resolved by the upstream per-zone gate" do
+      upstream = Keycardai::OAuth::TokenVerifier.new(
+        issuer: base_issuer, resource_identifiers_by_zone: { "a" => resource }, http_client: zone_http
+      )
+      route_verifier = real_verifier(issuers: zone_a_issuer, resource_identifier: resource)
+      local = double("route verifier", issuers: route_verifier.issuers)
+      presented = token_with_audience(resource, issuer: zone_a_issuer, key: zone_a_key, kid: "kid-a")
+      expect(local).to receive(:verify_token).with(presented) { route_verifier.verify_token(presented) }
+      route = described_class.new(probe, verifier: local, introspect: true, credential: credential, http_client: http)
+      outer = described_class.new(route, verifier: upstream, zone_resolver: ->(_env) { "a" })
+
+      expect(outer.call(bearer_env(presented)).first).to eq(200)
+      expect(http.calls.last.url).to eq("#{zone_a_issuer}/inspect-token")
+      expect(probe.ran?).to be(true)
+    end
+
     it "logs each distinct introspection failure once without logging the server body" do
       responses = [401, 401, 500]
       http = introspection_http do
