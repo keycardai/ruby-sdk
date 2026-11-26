@@ -15,6 +15,12 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.17.0-keycardai-oauth (2026-11-26)
+
+
+- feat(keycardai-oauth): bind metadata, challenges and audience to one resource identifier (#110)
+- Implements keycard-sdk-spec#151 for keycardai-oauth and keycardai-mcp. Refs SDK-14.
+
 ## 0.16.1-keycardai-oauth (2026-11-26)
 
 
