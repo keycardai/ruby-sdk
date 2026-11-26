@@ -13,7 +13,7 @@ module Keycardai
         end.freeze
       end
 
-      def check(endpoint, target)
+      def check(endpoint, target, source: "endpoint")
         endpoint_origin = origin(endpoint)
         target_origin = origin(target)
         unless endpoint_origin && target_origin
@@ -21,11 +21,29 @@ module Keycardai
         end
         return if endpoint_origin == target_origin || @trusted.include?(endpoint_origin)
 
-        raise DiscoveryError.new("endpoint origin #{endpoint_origin} is not trusted for target #{target.inspect}",
+        raise DiscoveryError.new("#{source} origin #{endpoint_origin} is not trusted for target #{target.inspect}",
                                  retryable: false)
       end
 
+      def check_redirect(response, endpoint, target)
+        return unless [301, 302, 303, 307, 308].include?(response.status)
+
+        location = location_of(response)
+        return if location.nil? || location.empty?
+
+        check(URI.join(endpoint, location).to_s, target, source: "redirect")
+      rescue URI::Error
+        nil
+      end
+
       private
+
+      def location_of(response)
+        return unless response.headers.respond_to?(:find)
+
+        header = response.headers.find { |name, _| name.to_s.casecmp?("location") }
+        Array(header&.last).first
+      end
 
       def trusted_origin(url)
         origin(url) if url.is_a?(String) && url.match?(%r{\Ahttps?://[^\s/?#@\\]+/?\z}i)
