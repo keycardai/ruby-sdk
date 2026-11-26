@@ -35,7 +35,7 @@ which are labelled without a row number.
 | `oauth-client/authorization-server-discovery` | `authorization_server_discovery_spec.rb` | 11 |
 | `oauth-client/token-revocation` | `token_revocation_spec.rb` | 15 |
 | `oauth-client/userinfo` | `userinfo_spec.rb` | 8 |
-| `oauth-client/client-credentials` | `client_credentials_spec.rb` | 9 |
+| `oauth-client/client-credentials` | `client_credentials_spec.rb` | 28 |
 | `oauth-client/token-exchange` | `token_exchange_spec.rb` | 11 |
 | `oauth-client/dynamic-client-registration` | `dynamic_client_registration_spec.rb` | 5 |
 | `oauth-client/authorization-code-pkce` | `authorization_code_pkce_spec.rb` + `authenticate_flow_spec.rb` | 23 |
