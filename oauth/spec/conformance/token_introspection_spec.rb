@@ -197,12 +197,25 @@ RSpec.describe Keycardai::OAuth do
     expect(http.requests).to be_empty
   end
 
-  it "uses the explicit issuer as supplied for client authentication when metadata also matches" do
+  it "uses the explicit issuer as supplied for credential zone lookup when metadata also matches" do
     expect(secret).to receive(:client_authentication)
-      .with(issuer: "#{issuer}/", endpoint: "#{issuer}/").and_call_original
+      .with(issuer: "#{issuer}/", endpoint: issuer).and_call_original
 
     introspect("#{issuer}/", metadata: metadata)
 
     expect(http.requests).to eq([endpoint])
+  end
+
+  it "signs for the advertised issuer when the explicit issuer differs by a trailing slash" do
+    Dir.mktmpdir do |dir|
+      credential = described_class::WebIdentity.new(client_id: "web-client", storage_dir: dir)
+
+      introspect("#{issuer}/", metadata: metadata, credential: credential)
+
+      assertion = http.calls.last.params.to_h.fetch("client_assertion")
+      key = JWT::JWK.import(credential.public_jwks.fetch("keys").first).verify_key
+      claims, = JWT.decode(assertion, key, true, algorithm: "RS256")
+      expect(claims.fetch("aud")).to eq(metadata.issuer)
+    end
   end
 end

@@ -78,7 +78,7 @@ module Keycardai
       def post(metadata, params, issuer:, credential:, http_client:, timeout:)
         endpoint = require_https_url(metadata.introspection_endpoint, "introspection_endpoint")
         params, headers = ClientAuth.apply(params, { "Accept" => "application/json" },
-                                           issuer: issuer, endpoint: issuer, credential: credential)
+                                           issuer: issuer, endpoint: metadata.issuer, credential: credential)
         parse_response(http_client.post_form(endpoint, params, headers: headers, timeout: timeout))
       end
 
