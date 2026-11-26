@@ -68,9 +68,13 @@ module Keycardai
         response = begin
           @http_client.get(url, headers: { "Accept" => "application/json" }, timeout: @timeout)
         rescue OAuth::NetworkError => e
-          raise DiscoveryError, "agent card fetch from #{url} failed: #{e.message}"
+          raise DiscoveryError.new("agent card fetch from #{url} failed: #{e.message}", retryable: true)
         end
-        raise DiscoveryError, "agent card fetch from #{url} returned HTTP #{response.status}" unless response.success?
+        unless response.success?
+          status = response.status
+          raise DiscoveryError.new("agent card fetch from #{url} returned HTTP #{status}",
+                                   retryable: status == 429 || (500..599).cover?(status))
+        end
 
         parse_card(url, response.body)
       end
@@ -79,10 +83,10 @@ module Keycardai
         card = begin
           JSON.parse(body)
         rescue JSON::ParserError
-          raise DiscoveryError, "agent card from #{url} is not valid JSON"
+          raise DiscoveryError.new("agent card from #{url} is not valid JSON", retryable: false)
         end
         unless card.is_a?(Hash) && card["name"].is_a?(String) && !card["name"].empty?
-          raise DiscoveryError, "agent card from #{url} is missing the required name"
+          raise DiscoveryError.new("agent card from #{url} is missing the required name", retryable: false)
         end
 
         card

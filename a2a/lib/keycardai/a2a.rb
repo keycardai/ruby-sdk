@@ -3,6 +3,7 @@
 require "keycardai/oauth"
 require_relative "a2a/version"
 require_relative "a2a/errors"
+require_relative "a2a/endpoint_origins"
 require_relative "a2a/wire"
 require_relative "a2a/peer_http"
 require_relative "a2a/service_discovery"
