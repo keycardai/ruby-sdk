@@ -14,6 +14,12 @@ protected-resource with path insertion, an RFC 8414 authorization-server proxy,
 and JWKS), and an AuthProvider whose `grant` middleware exchanges the caller's
 token per resource into an AccessContext. Wraps no MCP SDK.
 
+## 0.3.0-keycardai-mcp (2026-11-26)
+
+
+- feat(keycardai-mcp): token introspection in the bearer middleware (#134)
+- Adds the opt-in introspect option and application credential to the keycardai-mcp bearer gate per bearer-token-verification-middleware spec-version 8 (spec#101, ID-882).
+
 ## 0.2.0-keycardai-mcp (2026-11-26)
 
 
