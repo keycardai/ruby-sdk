@@ -3,10 +3,12 @@
 module Keycardai
   module OAuth
     # The headers and form fields that authenticate a client on one request
-    # to the authorization server. A credential that provides client
-    # authentication responds to client_authentication(issuer:, endpoint:)
-    # and returns one. The method is optional, so a credential defined
-    # outside the SDK keeps working without it.
+    # to the authorization server. A credential returns it from
+    # client_authentication(issuer:, endpoint:).
+    #
+    # Credentials used with ClientCredentialsClient must implement this method.
+    # It is also required when a credential is used for device authorization,
+    # authorization code exchange with PKCE, token refresh, or token revocation.
     #
     # It never includes a grant parameter such as grant_type or
     # subject_token_type. The caller merges it into its own request.
