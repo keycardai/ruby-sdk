@@ -85,3 +85,8 @@ card["url"]
 Cards are cached for 15 minutes by default (`cache_ttl:`). `refresh` forces a
 fetch, `clear_cache` drops everything. Passing the same `ServiceDiscovery` into
 `DelegationClient.new(discovery:)` shares one cache across both paths.
+
+Default HTTP transports limit decoded agent cards and invocation replies to
+64 MiB. Pass `max_peer_response_bytes:` to `DelegationClient.new` or
+`ServiceDiscovery.new` to set a positive byte limit. The setting does not
+change the 1 MiB token-exchange limit or cap a supplied HTTP client.
