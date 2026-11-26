@@ -87,16 +87,16 @@ RSpec.describe Keycardai::OAuth::HTTP::NetHTTPClient do
   it "applies the timeout per request and restores the 10 second default when absent" do
     client.get("https://zone.example/a", timeout: 2.5)
     session = sessions.first
-    expect([session.open_timeout, session.read_timeout, session.write_timeout]).to all(be_between(0, 2.5))
+    expect([session.open_timeout, session.read_timeout, session.write_timeout]).to eq([2.5, 2.5, 2.5])
 
     client.get("https://zone.example/b")
-    expect([session.open_timeout, session.read_timeout, session.write_timeout]).to all(be_between(9, 10))
+    expect([session.open_timeout, session.read_timeout, session.write_timeout]).to eq([10, 10, 10])
   end
 
   it "a request with no timeout never inherits Net::HTTP's 60 second default" do
     client.get("https://zone.example/a")
     session = sessions.first
-    expect([session.open_timeout, session.read_timeout, session.write_timeout]).to all(be_between(9, 10))
+    expect([session.open_timeout, session.read_timeout, session.write_timeout]).to eq([10, 10, 10])
   end
 
   it "close finishes sessions and the next request opens a fresh one" do
@@ -148,23 +148,6 @@ RSpec.describe Keycardai::OAuth::HTTP::NetHTTPClient do
     client.get("https://zone.example/a")
 
     expect(sessions.first).to have_attributes(max_retries: 0, ignore_eof: false)
-  end
-end
-
-RSpec.describe Keycardai::OAuth::HTTP::NetHTTPClient, "proxy selection" do
-  it "does not open a connection when the proxy lookup exhausts the request budget" do
-    stub_const("ENV", { "http_proxy" => "http://127.0.0.1:3128" })
-    elapsed = 0.0
-    allow(Process).to receive(:clock_gettime).and_call_original
-    allow(Process).to receive(:clock_gettime).with(Process::CLOCK_MONOTONIC) { elapsed }
-    expect(IPSocket).to receive(:getaddress).with("zone.example") do
-      elapsed = 0.25
-      "192.0.2.1"
-    end
-    expect(TCPSocket).not_to receive(:open)
-
-    expect { described_class.new.get("http://zone.example/a", timeout: 0.2) }
-      .to raise_error(Keycardai::OAuth::NetworkError, "request deadline exceeded")
   end
 end
 

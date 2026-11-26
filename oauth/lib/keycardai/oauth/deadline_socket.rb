@@ -43,12 +43,19 @@ module Keycardai
       module DeadlineSession
         attr_accessor :request_deadline
 
+        def start_with_deadline(deadline)
+          self.request_deadline = deadline
+          apply_deadline
+          start unless started?
+          apply_deadline
+        end
+
+        private
+
         def apply_deadline
           remaining = request_deadline.remaining
           self.open_timeout = self.read_timeout = self.write_timeout = remaining
         end
-
-        private
 
         def connect
           # Proxy selection can resolve the destination before Net::HTTP opens

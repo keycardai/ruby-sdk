@@ -319,7 +319,13 @@ RSpec.describe "A2A delegation peer reply size" do
   let(:limit) { Keycardai::OAuth::MAX_RESPONSE_BODY_BYTES }
   let(:oversized) { "x" * (limit + 1024) }
   let(:requests) { Queue.new }
-  let(:reply_type) { Data.define(:status, :encoding, :body) }
+  let(:reply_type) do
+    Data.define(:status, :encoding, :body, :chunk_delay) do
+      def initialize(status:, encoding:, body:, chunk_delay: nil)
+        super
+      end
+    end
+  end
 
   def card_for(base)
     { "name" => "agent-b", "url" => "#{base}/a2a/jsonrpc" }
@@ -354,11 +360,20 @@ RSpec.describe "A2A delegation peer reply size" do
     socket.write("HTTP/1.1 #{reply.status} Result\r\nContent-Type: application/json\r\n" \
                  "Content-Length: #{reply.body.bytesize}\r\nContent-Encoding: #{reply.encoding}\r\n" \
                  "Connection: close\r\n\r\n")
-    socket.write(reply.body)
+    write_body(socket, reply)
   rescue IOError, SystemCallError
     nil
   ensure
     socket.close
+  end
+
+  def write_body(socket, reply)
+    return socket.write(reply.body) unless reply.chunk_delay
+
+    reply.body.bytes.each_slice(8) do |bytes|
+      sleep(reply.chunk_delay)
+      socket.write(bytes.pack("C*"))
+    end
   end
 
   def with_server(build_routes)
@@ -403,6 +418,16 @@ RSpec.describe "A2A delegation peer reply size" do
       result = client(base).invoke(target: base, subject_token: "user-token", message: Keycardai::A2A.text_message("hi"))
 
       expect(result.message["text"].bytesize).to eq(oversized.bytesize)
+    end
+  end
+
+  it "returns a trickling invocation reply that takes longer than the per-read timeout" do
+    body = '{"jsonrpc":"2.0","id":"1","result":{"text":"handled"}}'
+    reply = reply_type.new(200, "identity", body, 0.05)
+    with_server(->(base) { routes(base, rpc: reply) }) do |base|
+      result = fetch_peer(base, :rpc, invoke_timeout: 0.2)
+
+      expect(result.message).to eq("text" => "handled")
     end
   end
 

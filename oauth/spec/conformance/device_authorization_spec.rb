@@ -420,6 +420,23 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
   end
 
   describe "poll once" do
+    it "does not open a connection when the proxy lookup exhausts the poll budget" do
+      stub_const("ENV", { "http_proxy" => "http://127.0.0.1:3128" })
+      elapsed = 0.0
+      allow(Process).to receive(:clock_gettime).and_call_original
+      allow(Process).to receive(:clock_gettime).with(Process::CLOCK_MONOTONIC) { elapsed }
+      expect(IPSocket).to receive(:getaddress).with("zone.example") do
+        elapsed = 0.25
+        "192.0.2.1"
+      end
+      expect(TCPSocket).not_to receive(:open)
+      metadata = parsed_metadata(zone.metadata(device: true).merge("token_endpoint" => "http://zone.example/token"))
+      device = described_class.new(metadata: metadata, client_id: "cid", timeout: 0.2)
+
+      expect { device.poll_token(authorization) }
+        .to raise_error(Keycardai::OAuth::NetworkError, "request deadline exceeded")
+    end
+
     it "returns a complete token response even if the transport returns after the request deadline" do
       elapsed = 0.0
       allow(Process).to receive(:clock_gettime).and_call_original
