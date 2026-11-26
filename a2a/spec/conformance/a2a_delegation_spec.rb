@@ -286,6 +286,23 @@ RSpec.describe "A2A delegation" do
         expect(transport.calls.last.headers["Authorization"]).to eq("Bearer at_delegated")
       end
     end
+
+    it "16: refuses a cross-origin redirect from a custom client with symbol header keys" do
+      response = Keycardai::OAuth::HTTP::Response.new(status: 307, headers: { location: "https://other.test/rpc" },
+                                                      body: "")
+      delegation = client(http(rpc_response: response))
+
+      expect { delegation.invoke(target: target, subject_token: "at_user", message: {}) }
+        .to raise_error(Keycardai::A2A::DiscoveryError, %r{redirect origin https://other.test:443})
+    end
+
+    it "raises InvocationError for a redirect from a custom client with no headers" do
+      response = Keycardai::OAuth::HTTP::Response.new(status: 307, headers: nil, body: "")
+      delegation = client(http(rpc_response: response))
+
+      expect { delegation.invoke(target: target, subject_token: "at_user", message: {}) }
+        .to raise_error(Keycardai::A2A::InvocationError)
+    end
   end
 
   it "honors a card-declared invocation endpoint over the convention path" do

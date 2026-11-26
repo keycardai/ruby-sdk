@@ -28,8 +28,7 @@ module Keycardai
       def check_redirect(response, endpoint, target)
         return unless [301, 302, 303, 307, 308].include?(response.status)
 
-        header = response.headers.find { |name, _| name.casecmp?("location") }
-        location = Array(header&.last).first
+        location = location_of(response)
         return if location.nil? || location.empty?
 
         check(URI.join(endpoint, location).to_s, target, source: "redirect")
@@ -38,6 +37,13 @@ module Keycardai
       end
 
       private
+
+      def location_of(response)
+        return unless response.headers.respond_to?(:find)
+
+        header = response.headers.find { |name, _| name.to_s.casecmp?("location") }
+        Array(header&.last).first
+      end
 
       def trusted_origin(url)
         origin(url) if url.is_a?(String) && url.match?(%r{\Ahttps?://[^\s/?#@\\]+/?\z}i)
