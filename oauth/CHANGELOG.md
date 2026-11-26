@@ -15,6 +15,19 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.15.0-keycardai-oauth (2026-11-26)
+
+
+- feat(keycardai-oauth): bind credentials to the client credentials grant (#103)
+- * feat(keycardai-oauth): bind credentials to the client credentials grant
+- Co-Authored-By: Devin AI <158243242+devin-ai-integration[bot]@users.noreply.github.com>
+- * test(keycardai-oauth): cover row 4d without a request client_id
+- * fix(keycardai-oauth): reject request client fields beside a configured assertion credential and resolve ClientSecret before discovery
+- ---------
+- Co-authored-by: devin-ai-keycard <devin-ai@keycard.ai>
+Co-authored-by: Devin AI <158243242+devin-ai-integration[bot]@users.noreply.github.com>
+Co-authored-by: Larry Osakwe <23560354+Larry-Osakwe@users.noreply.github.com>
+
 ## 0.14.0-keycardai-oauth (2026-11-26)
 
 
