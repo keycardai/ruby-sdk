@@ -260,6 +260,34 @@ RSpec.describe "A2A delegation" do
     end
   end
 
+  describe "invocation redirects" do
+    [
+      ["16: refuses a cross-origin 307", 307, "https://other.test/rpc", [], "https://other.test:443"],
+      ["16: refuses a cross-origin 302", 302, "https://agent-b.test:8443/rpc", [], "https://agent-b.test:8443"],
+      ["17: does not follow a same-origin redirect", 307, "/next", [], nil],
+      ["18: does not follow an allowlisted redirect", 307, "https://other.test/rpc", ["https://other.test"], nil],
+      ["19: refuses an HTTPS to HTTP redirect", 307, "http://agent-b.test/a2a/jsonrpc", [], "http://agent-b.test:80"]
+    ].each do |name, status, location, trusted, denied_origin|
+      it name do
+        response = Keycardai::OAuth::HTTP::Response.new(status: status, headers: { "Location" => [location] }, body: "")
+        transport = http(rpc_response: response)
+        delegation = client(transport, trusted_endpoint_origins: trusted)
+        invoke = -> { delegation.invoke(target: target, subject_token: "at_user", message: {}) }
+
+        if denied_origin
+          expect(&invoke).to raise_error(Keycardai::A2A::DiscoveryError) do |error|
+            expect(error.message).to include("redirect origin #{denied_origin}", target)
+            expect(error.retryable?).to be(false)
+          end
+        else
+          expect(&invoke).to raise_error(Keycardai::A2A::InvocationError)
+        end
+        expect(transport.calls.map(&:url)).to eq(urls.values_at(:agent_card, :zone_metadata, :token, :jsonrpc))
+        expect(transport.calls.last.headers["Authorization"]).to eq("Bearer at_delegated")
+      end
+    end
+  end
+
   it "honors a card-declared invocation endpoint over the convention path" do
     custom_rpc = "#{target}/custom/rpc"
     transport = FakeHTTPClient.new do |url, _params|

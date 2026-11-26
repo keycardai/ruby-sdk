@@ -83,7 +83,7 @@ module Keycardai
         endpoint = jsonrpc_url(target, card)
         @endpoint_origins.check(endpoint, target)
         token = @exchange.exchange_token(subject_token: subject_token, resource: target.chomp("/"))
-        result = post_jsonrpc(endpoint, token.access_token, message)
+        result = post_jsonrpc(endpoint, target, token.access_token, message)
         Result.new(message: result, agent_card: card)
       end
 
@@ -96,12 +96,13 @@ module Keycardai
         @wire.endpoint_from(card) || "#{target.chomp("/")}#{JSONRPC_PATH}"
       end
 
-      def post_jsonrpc(url, access_token, message)
+      def post_jsonrpc(url, target, access_token, message)
         payload = { "jsonrpc" => "2.0", "id" => SecureRandom.uuid, "method" => @wire.method_name,
                     "params" => @wire.encode_params(message) }
         headers = { "Accept" => "application/json", "Authorization" => "Bearer #{access_token}",
                     @wire.header => @wire.version }
         response = @http_client.post_json(url, payload, headers: headers, timeout: @invoke_timeout)
+        @endpoint_origins.check_redirect(response, url, target)
         raise InvocationError, "invocation of #{url} returned HTTP #{response.status}" unless response.success?
 
         parse_jsonrpc(url, response.body)
