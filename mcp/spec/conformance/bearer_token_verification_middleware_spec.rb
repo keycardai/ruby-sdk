@@ -425,13 +425,13 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
       end
     end
 
-    def per_zone_middleware(resolver: path_zone_resolver)
+    def per_zone_middleware(resolver: path_zone_resolver, **options)
       verifier = Keycardai::OAuth::TokenVerifier.new(
         issuer: base_issuer,
         resource_identifiers_by_zone: zone_map,
         http_client: zone_http
       )
-      described_class.new(probe, verifier: verifier, zone_resolver: resolver)
+      described_class.new(probe, verifier: verifier, zone_resolver: resolver, **options)
     end
 
     it "16: resolves zone without a token for anonymous challenge and verifies zone token without warning" do
@@ -504,6 +504,20 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
         .to raise_error(Keycardai::OAuth::ConfigurationError)
       expect { per_zone_middleware(resolver: nil) }
         .to raise_error(Keycardai::OAuth::ConfigurationError)
+    end
+
+    it "publishes the resolved zone and locally verified auth even when an introspection-off request is denied" do
+      gated = per_zone_middleware(required_scopes: ["mcp:admin"])
+      anon_env = rack_env(path: "/a/mcp")
+      token = token_with_audience(zone_map.fetch("a"), issuer: zone_a_issuer, key: zone_a_key, kid: "kid-a")
+      denied_env = rack_env(path: "/a/mcp", headers: { "Authorization" => "Bearer #{token}" })
+
+      expect(gated.call(anon_env).first).to eq(401)
+      expect(anon_env[Keycardai::MCP::ENV_ZONE_ID]).to eq("a")
+      expect(anon_env[Keycardai::MCP::ENV_AUTH_INFO]).to be_nil
+      expect(gated.call(denied_env).first).to eq(403)
+      expect(denied_env[Keycardai::MCP::ENV_ZONE_ID]).to eq("a")
+      expect(denied_env[Keycardai::MCP::ENV_AUTH_INFO].issuer).to eq(zone_a_issuer)
     end
   end
 
@@ -589,11 +603,13 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
 
     it "19: returns an invalid_token challenge with resource metadata for an inactive token" do
       http = introspection_http { http_json({ "active" => false }) }
-      status, headers, = gate(http_client: http).call(bearer_env(token))
+      env = bearer_env(token)
+      status, headers, = gate(http_client: http).call(env)
 
       expect(status).to eq(401)
       expect(headers["www-authenticate"]).to include('error="invalid_token"',
                                                      'resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp"')
+      expect(Keycardai::MCP.auth_info(env)).to be_nil
       expect(probe.ran?).to be(false)
     end
 

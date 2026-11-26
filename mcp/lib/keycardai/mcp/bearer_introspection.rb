@@ -9,6 +9,7 @@ module Keycardai
       def initialize(verifier:, credential:, http_client:, timeout:, discovery_ttl:)
         @issuers = credential.respond_to?(:issuers) ? Array(credential.issuers).map { |url| url.chomp("/") } : []
         validate!(verifier, credential)
+        @verifier = verifier
         @credential = credential
         @http_client = http_client || Keycardai::OAuth::HTTP::NetHTTPClient.new
         unless @http_client.respond_to?(:get) && @http_client.respond_to?(:post_form)
@@ -21,13 +22,26 @@ module Keycardai
         @mutex = Mutex.new
       end
 
-      def failure_response(env, access_token, binding, zone_id)
+      def verify_inherited_zone(token, zone_id, env)
+        return [@verifier.verify_token_for_zone(token, zone_id), nil] if @verifier.respond_to?(:verify_token_for_zone)
+
+        token_info = @verifier.verify_token(token)
+        return [token_info, nil] if RackSupport.verified_issuer_for_zone?(env, zone_id, token_info.issuer)
+
+        [nil, "token issuer does not match the selected zone"]
+      end
+
+      def authorize(env, access_token, binding, zone_id)
         case check(access_token)
         when :unavailable
           RackSupport.json_response({ "error" => "temporarily_unavailable" }, status: 503)
         when :inactive
           RackSupport.challenge_response(env, status: 401, error: "invalid_token",
                                               description: "token is inactive", binding: binding, zone_id: zone_id)
+        else
+          env[ENV_ZONE_ID] = zone_id if zone_id
+          env[ENV_AUTH_INFO] = access_token
+          nil
         end
       end
 

@@ -77,11 +77,12 @@ module Keycardai
       private
 
       def call_per_zone(env, binding)
-        zone_id = @zone_resolver ? @zone_resolver.call(env) : env[ENV_ZONE_ID]
+        zone_id = @introspection && !@zone_resolver ? env[ENV_ZONE_ID] : @zone_resolver.call(env)
         unless zone_id && binding.zone_identifiers.key?(zone_id)
           return RackSupport.challenge_response(env, status: 401, binding: binding, include_metadata: false)
         end
 
+        env[ENV_ZONE_ID] = zone_id unless @introspection
         authenticate_request(env, binding, zone_id)
       end
 
@@ -123,6 +124,7 @@ module Keycardai
                                                      description: failure, binding: binding, zone_id: zone_id)
         end
 
+        env[ENV_AUTH_INFO] = access_token unless @introspection
         enforce_scopes(env, access_token, binding, zone_id)
       end
 
@@ -134,11 +136,9 @@ module Keycardai
                                                      binding: binding, zone_id: zone_id)
         end
 
-        introspection_failure = @introspection&.failure_response(env, access_token, binding, zone_id)
+        introspection_failure = @introspection&.authorize(env, access_token, binding, zone_id)
         return introspection_failure if introspection_failure
 
-        env[ENV_ZONE_ID] = zone_id if zone_id
-        env[ENV_AUTH_INFO] = access_token
         @app.call(env)
       end
 
@@ -149,12 +149,12 @@ module Keycardai
       private_constant :UNAVAILABLE_ERRORS
 
       def verify(token, zone_id, env)
-        pinned = zone_id && (@resource_binding || @verifier.respond_to?(:verify_token_for_zone))
-        return [@verifier.verify_token_for_zone(token, zone_id), nil] if pinned
+        if @introspection && zone_id && !@resource_binding
+          return @introspection.verify_inherited_zone(token, zone_id, env)
+        end
 
-        token_info = @verifier.verify_token(token)
-        trusted_issuer = zone_id.nil? || RackSupport.verified_issuer_for_zone?(env, zone_id, token_info.issuer)
-        trusted_issuer ? [token_info, nil] : [nil, "token issuer does not match the selected zone"]
+        token_info = zone_id ? @verifier.verify_token_for_zone(token, zone_id) : @verifier.verify_token(token)
+        [token_info, nil]
       rescue *UNAVAILABLE_ERRORS
         [nil, :unavailable]
       rescue Keycardai::Error => e
