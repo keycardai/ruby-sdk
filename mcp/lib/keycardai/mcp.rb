@@ -19,6 +19,12 @@ module Keycardai
     # Rack env key holding the AccessContext produced by grant middleware.
     ENV_ACCESS_CONTEXT = "keycardai.access_context"
 
+    # Rack env key holding the active ResourceBinding from upstream bearer middleware.
+    ENV_RESOURCE_BINDING = "keycardai.resource_binding"
+
+    # Rack env key holding the resolved zone ID from upstream per-zone middleware.
+    ENV_ZONE_ID = "keycardai.zone_id"
+
     # The verified inbound token for this request, set by RequireBearerAuth.
     #
     # @param env [Hash] the Rack env

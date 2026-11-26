@@ -5,9 +5,9 @@ require "openssl"
 
 # Conformance suite for keycard-sdk-spec
 # specs/server-bearer-auth/bearer-token-verification-middleware.md
-# (spec-version 2). Each example maps to a row of the spec's Unit Tests table;
-# rows 7 and 8 use a real TokenVerifier over an in-memory zone because they
-# exercise construction and audience binding, which the FakeVerifier elides.
+# (spec-version 7). Each example maps to a row of the spec's Unit Tests table;
+# rows exercising construction, resource binding, and audience verification use
+# a real TokenVerifier over in-memory zones.
 RSpec.describe Keycardai::MCP::RequireBearerAuth do
   let(:probe) { ProbeApp.new }
   let(:verifier) { FakeVerifier.new("at_valid" => access_token) }
@@ -16,44 +16,64 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
     described_class.new(probe, verifier: verifier, **options)
   end
 
-  # A zone with one RSA key, its JWKS served through the fake transport, and a
-  # token minted for a resource other than this server.
+  # Zones with RSA keys served through an in-memory transport.
   let(:zone_issuer) { "https://acme.test" }
+  let(:base_issuer) { "https://keycard.cloud" }
+  let(:zone_a_issuer) { "https://a.keycard.cloud" }
+  let(:zone_b_issuer) { "https://b.keycard.cloud" }
   let(:zone_key) { OpenSSL::PKey::RSA.new(2048) }
+  let(:zone_a_key) { OpenSSL::PKey::RSA.new(2048) }
+  let(:zone_b_key) { OpenSSL::PKey::RSA.new(2048) }
+
+  def jwks_for(key, kid)
+    jwk = JWT::JWK.new(key.public_key, { kid: kid, use: "sig", alg: "RS256" })
+    { "keys" => [jwk.export.transform_keys(&:to_s)] }
+  end
+
   let(:zone_http) do
-    jwk = JWT::JWK.new(zone_key.public_key, { kid: "kid-1", use: "sig", alg: "RS256" })
-    jwks = { "keys" => [jwk.export.transform_keys(&:to_s)] }
+    keys_by_issuer = {
+      zone_issuer => [zone_key, "kid-1"],
+      zone_a_issuer => [zone_a_key, "kid-a"],
+      zone_b_issuer => [zone_b_key, "kid-b"]
+    }
     FakeHTTPClient.new do |url, _params|
+      issuer = keys_by_issuer.keys.find { |iss| url.start_with?("#{iss}/") }
+      next http_json({}, status: 404) unless issuer
+
+      key, kid = keys_by_issuer[issuer]
       case url
-      when "#{zone_issuer}/.well-known/oauth-authorization-server"
-        http_json({ "issuer" => zone_issuer, "jwks_uri" => "#{zone_issuer}/.well-known/jwks.json",
-                    "token_endpoint" => "#{zone_issuer}/oauth/token" })
-      when "#{zone_issuer}/.well-known/jwks.json"
-        http_json(jwks)
+      when "#{issuer}/.well-known/oauth-authorization-server"
+        http_json({ "issuer" => issuer, "jwks_uri" => "#{issuer}/.well-known/jwks.json",
+                    "token_endpoint" => "#{issuer}/oauth/token" })
+      when "#{issuer}/.well-known/jwks.json"
+        http_json(jwks_for(key, kid))
       else
         http_json({}, status: 404)
       end
     end
   end
+
   let(:foreign_resource_token) { token_with_audience("https://other.example.com") }
 
-  def token_with_audience(audience)
-    claims = { "iss" => zone_issuer, "sub" => "usr_123", "aud" => audience,
+  def token_with_audience(audience, issuer: zone_issuer, key: zone_key, kid: "kid-1", scope: "mcp:tools")
+    claims = { "iss" => issuer, "sub" => "usr_123", "aud" => audience,
                "exp" => Time.now.to_i + 300, "iat" => Time.now.to_i,
-               "client_id" => "client_abc", "scope" => "mcp:tools" }
-    JWT.encode(claims, zone_key, "RS256", { "kid" => "kid-1" })
+               "client_id" => "client_abc", "scope" => scope }
+    JWT.encode(claims, key, "RS256", { "kid" => kid })
   end
 
-  def real_verifier(**options)
-    Keycardai::OAuth::TokenVerifier.new(issuers: zone_issuer, http_client: zone_http, **options)
+  def real_verifier(issuers: zone_issuer, **options)
+    Keycardai::OAuth::TokenVerifier.new(issuers: issuers, http_client: zone_http, **options)
   end
 
   it "1: a missing Authorization header yields 401 with a resource_metadata challenge" do
-    status, headers, = middleware.call(rack_env)
+    gated = described_class.new(probe, verifier: real_verifier(resource_identifier: "https://tool.example.com/mcp"))
+
+    status, headers, = gated.call(rack_env(path: "/mcp"))
 
     expect(status).to eq(401)
     expect(headers["www-authenticate"])
-      .to include('resource_metadata="https://tool.example.com/.well-known/oauth-protected-resource"')
+      .to eq('Bearer resource_metadata="https://tool.example.com/.well-known/oauth-protected-resource/mcp"')
     expect(probe.ran?).to be(false)
   end
 
@@ -107,7 +127,9 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
   end
 
   context "with the verified audience and actor claims" do
-    let(:gated) { described_class.new(probe, verifier: real_verifier(audiences: "resource-a")) }
+    let(:gated) do
+      described_class.new(probe, verifier: real_verifier(multi_resource: true, audiences: ["resource-a"]))
+    end
 
     def signed_caller_token(aud, **extras)
       now = Time.now.to_i
@@ -156,11 +178,11 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
     expect(probe.ran?).to be(false)
   end
 
-  it "7: a verifier built without an audience warns once naming audiences:, " \
-     "and accepts a token minted for another resource" do
+  it "7: constructing without an identifier or audience mode warns once naming resource_identifier " \
+     "and retains legacy audience acceptance" do
     unbound = nil
     expect { unbound = real_verifier }
-      .to output(/warning: .*has no audiences configured.*pass audiences:/).to_stderr
+      .to output(/warning: .*resource_identifier/).to_stderr
     gated = described_class.new(probe, verifier: unbound)
 
     status, = gated.call(rack_env(headers: { "Authorization" => "Bearer #{foreign_resource_token}" }))
@@ -169,13 +191,13 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
     expect(Keycardai::MCP.auth_info(probe.seen_env).audiences).to eq(["https://other.example.com"])
   end
 
-  it "8: a verifier built with an audience emits no warning, " \
-     "and a token minted for another resource is 401 invalid_token" do
+  it "8: resource_identifier emits no warning and rejects a same-zone token for another resource" do
     bound = nil
-    expect { bound = real_verifier(audiences: "https://tool.example.com") }.not_to output.to_stderr
+    expect { bound = real_verifier(resource_identifier: "https://api.example.com/mcp") }.not_to output.to_stderr
     gated = described_class.new(probe, verifier: bound)
+    other = token_with_audience("https://api.example.com/other")
 
-    status, headers, = gated.call(rack_env(headers: { "Authorization" => "Bearer #{foreign_resource_token}" }))
+    status, headers, = gated.call(rack_env(path: "/mcp", headers: { "Authorization" => "Bearer #{other}" }))
 
     expect(status).to eq(401)
     expect(headers["www-authenticate"]).to include('error="invalid_token"')
@@ -183,13 +205,17 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
   end
 
   [
-    ["8a: a scalar audience matches the second configured value", "resource-b", 200],
-    ["8b: a scalar audience without a match is 401 invalid_token", "resource-c", 401],
-    ["8c: an array audience with one match proceeds", %w[resource-c resource-b], 200],
-    ["8d: an array audience without a match is 401 invalid_token", %w[resource-c resource-d], 401]
+    ["8a: multi_resource with audiences accepts a scalar audience matching the second value", "resource-b", 200],
+    ["8b: multi_resource with audiences rejects a scalar audience without a match", "resource-c", 401],
+    ["8c: multi_resource with audiences accepts an array audience with one match", %w[resource-c resource-b], 200],
+    ["8d: multi_resource with audiences rejects an array audience without a match", %w[resource-c resource-d], 401]
   ].each do |description, audience, expected_status|
     it description do
-      gated = described_class.new(probe, verifier: real_verifier(audiences: %w[resource-a resource-b]))
+      bound = nil
+      expect do
+        bound = real_verifier(multi_resource: true, audiences: %w[resource-a resource-b])
+      end.not_to output.to_stderr
+      gated = described_class.new(probe, verifier: bound)
       token = token_with_audience(audience)
       status, headers, = gated.call(rack_env(headers: { "Authorization" => "Bearer #{token}" }))
 
@@ -198,22 +224,347 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
     end
   end
 
-  it "8e: explicitly empty audiences raise at construction" do
-    expect { real_verifier(audiences: []) }.to raise_error(Keycardai::OAuth::ConfigurationError, /audiences/)
+  it "8e: multi_resource with an explicitly empty audiences list raises at construction without warning" do
+    expect do
+      expect { real_verifier(multi_resource: true, audiences: []) }
+        .to raise_error(Keycardai::OAuth::ConfigurationError, /audiences/)
+    end.not_to output.to_stderr
+
+    expect do
+      expect { Keycardai::MCP::AuthProvider.new(zone_url: zone_issuer, multi_resource: true, audiences: []) }
+        .to raise_error(Keycardai::OAuth::ConfigurationError, /audiences/)
+    end.not_to output.to_stderr
   end
 
-  it "8e: AuthProvider rejects an empty audiences array at construction and enforces a nonempty one" do
-    expect { Keycardai::MCP::AuthProvider.new(zone_url: zone_issuer, audiences: []) }
-      .to raise_error(Keycardai::OAuth::ConfigurationError, /audiences/)
+  it "8f: multi_resource with audiences omits resource_metadata on 401 and emits no warning" do
+    bound = nil
+    expect do
+      bound = real_verifier(multi_resource: true, audiences: %w[resource-a resource-b])
+    end.not_to output.to_stderr
+    gated = described_class.new(probe, verifier: bound)
 
-    provider = Keycardai::MCP::AuthProvider.new(zone_url: zone_issuer, audiences: %w[resource-a resource-b],
-                                                http_client: zone_http)
+    ok_status, = gated.call(rack_env(headers: { "Authorization" => "Bearer #{token_with_audience("resource-b")}" }))
+    bad_status, bad_headers, = gated.call(
+      rack_env(headers: { "Authorization" => "Bearer #{token_with_audience("resource-c")}" })
+    )
+
+    expect(ok_status).to eq(200)
+    expect(bad_status).to eq(401)
+    expect(bad_headers["www-authenticate"]).to include('error="invalid_token"')
+    expect(bad_headers["www-authenticate"]).not_to include("resource_metadata=")
+  end
+
+  it "8g: allow_any_audience accepts another resource, rejects invalid signature without resource_metadata" do
+    bound = nil
+    expect { bound = real_verifier(allow_any_audience: true) }.not_to output.to_stderr
+    gated = described_class.new(probe, verifier: bound)
+
+    ok_status, = gated.call(rack_env(headers: { "Authorization" => "Bearer #{foreign_resource_token}" }))
+    forged = token_with_audience("https://other.example.com", key: OpenSSL::PKey::RSA.new(2048))
+    bad_status, bad_headers, = gated.call(rack_env(headers: { "Authorization" => "Bearer #{forged}" }))
+
+    expect(ok_status).to eq(200)
+    expect(bad_status).to eq(401)
+    expect(bad_headers["www-authenticate"]).to include('error="invalid_token"')
+    expect(bad_headers["www-authenticate"]).not_to include("resource_metadata=")
+  end
+
+  it "8h: URN resource_identifier enforces exact aud match and omits resource_metadata" do
+    bound = nil
+    expect { bound = real_verifier(resource_identifier: "urn:example:service") }.not_to output.to_stderr
+    gated = described_class.new(probe, verifier: bound)
+
+    ok_status, = gated.call(
+      rack_env(headers: { "Authorization" => "Bearer #{token_with_audience("urn:example:service")}" })
+    )
+    bad_status, bad_headers, = gated.call(
+      rack_env(headers: { "Authorization" => "Bearer #{token_with_audience("urn:example:other")}" })
+    )
+
+    expect(ok_status).to eq(200)
+    expect(bad_status).to eq(401)
+    expect(bad_headers["www-authenticate"]).to include('error="invalid_token"')
+    expect(bad_headers["www-authenticate"]).not_to include("resource_metadata=")
+  end
+
+  it "12: anonymous request to configured path through TLS-terminating HTTP proxy advertises configured metadata URL" do
+    gated = described_class.new(probe, verifier: real_verifier(resource_identifier: "https://api.example.com/mcp"))
+
+    status, headers, = gated.call(rack_env(path: "/mcp", scheme: "http", host: "internal"))
+
+    expect(status).to eq(401)
+    expect(headers["www-authenticate"])
+      .to eq('Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp"')
+  end
+
+  it "12a: anonymous requests to non-matching path or query omit resource_metadata" do
+    gated = described_class.new(probe, verifier: real_verifier(resource_identifier: "https://api.example.com/mcp"))
+
+    status1, headers1, = gated.call(rack_env(path: "/tools", scheme: "http", host: "internal"))
+    status2, headers2, = gated.call(rack_env(path: "/mcp", query: "other=1", scheme: "http", host: "internal"))
+
+    expect(status1).to eq(401)
+    expect(headers1["www-authenticate"]).not_to include("resource_metadata=")
+    expect(status2).to eq(401)
+    expect(headers2["www-authenticate"]).not_to include("resource_metadata=")
+  end
+
+  it "12b: bare origin resource_identifier matches / for challenge but rejects trailing-slash aud" do
+    gated = described_class.new(probe, verifier: real_verifier(resource_identifier: "https://api.example.com"))
+
+    anon_status, anon_headers, = gated.call(rack_env(path: "/"))
+    slash_token = token_with_audience("https://api.example.com/")
+    tok_status, tok_headers, = gated.call(rack_env(path: "/", headers: { "Authorization" => "Bearer #{slash_token}" }))
+
+    expect(anon_status).to eq(401)
+    expect(anon_headers["www-authenticate"])
+      .to eq('Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource"')
+    expect(tok_status).to eq(401)
+    expect(tok_headers["www-authenticate"]).to include(
+      'error="invalid_token"',
+      'resource_metadata="https://api.example.com/.well-known/oauth-protected-resource"'
+    )
+  end
+
+  it "12c: spoofed Host and X-Forwarded-* headers do not alter the advertised metadata URL" do
+    gated = described_class.new(probe, verifier: real_verifier(resource_identifier: "https://api.example.com/mcp"))
+
+    status, headers, = gated.call(rack_env(
+                                    path: "/mcp",
+                                    host: "attacker.example",
+                                    headers: {
+                                      "X-Forwarded-Host" => "evil.example",
+                                      "X-Forwarded-Proto" => "http"
+                                    }
+                                  ))
+
+    expect(status).to eq(401)
+    expect(headers["www-authenticate"])
+      .to eq('Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp"')
+  end
+
+  it "12d: mounted handler compares path before in-app mount stripping (SCRIPT_NAME + PATH_INFO)" do
+    gated = described_class.new(probe, verifier: real_verifier(resource_identifier: "https://api.example.com/app/mcp"))
+
+    status, headers, = gated.call(rack_env(script_name: "/app", path: "/mcp"))
+
+    expect(status).to eq(401)
+    expect(headers["www-authenticate"])
+      .to eq('Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/app/mcp"')
+  end
+
+  it "13: combining resource_identifier and allow_any_audience raises ConfigurationError" do
+    expect do
+      real_verifier(resource_identifier: "https://api.example.com/mcp", allow_any_audience: true)
+    end.to raise_error(Keycardai::OAuth::ConfigurationError)
+  end
+
+  it "14: legacy audience list without multi_resource warns once naming resource_identifier " \
+     "and retains audience check and legacy challenge" do
+    bound = nil
+    expect { bound = real_verifier(audiences: %w[resource-a resource-b]) }
+      .to output(/warning: .*resource_identifier/).to_stderr
+    gated = described_class.new(probe, verifier: bound)
+
+    anon_status, anon_headers, = gated.call(rack_env(path: "/tools"))
+    ok_status, = gated.call(rack_env(headers: { "Authorization" => "Bearer #{token_with_audience("resource-b")}" }))
+    bad_status, = gated.call(rack_env(headers: { "Authorization" => "Bearer #{token_with_audience("resource-c")}" }))
+
+    expect(anon_status).to eq(401)
+    expect(anon_headers["www-authenticate"])
+      .to include('resource_metadata="https://tool.example.com/.well-known/oauth-protected-resource"')
+    expect(ok_status).to eq(200)
+    expect(bad_status).to eq(401)
+  end
+
+  it "14a: legacy scalar audience without explicit mode warns once naming resource_identifier " \
+     "and retains scalar check and legacy challenge" do
+    bound = nil
+    expect { bound = real_verifier(audiences: "https://api.example.com/mcp") }
+      .to output(/warning: .*resource_identifier/).to_stderr
+    gated = described_class.new(probe, verifier: bound)
+
+    ok_status, = gated.call(
+      rack_env(headers: { "Authorization" => "Bearer #{token_with_audience("https://api.example.com/mcp")}" })
+    )
+    bad_status, = gated.call(rack_env(headers: { "Authorization" => "Bearer #{foreign_resource_token}" }))
+
+    expect(ok_status).to eq(200)
+    expect(bad_status).to eq(401)
+  end
+
+  it "14b: multi_resource: true with scalar or zone map audiences raises ConfigurationError" do
+    expect { real_verifier(multi_resource: true, audiences: "https://api.example.com/mcp") }
+      .to raise_error(Keycardai::OAuth::ConfigurationError)
+    expect { real_verifier(multi_resource: true, audiences: { "a" => "https://api.example.com/a" }) }
+      .to raise_error(Keycardai::OAuth::ConfigurationError)
+  end
+
+  it "15: valid token for configured HTTPS resource_identifier proceeds over internal HTTP proxy" do
+    gated = described_class.new(probe, verifier: real_verifier(resource_identifier: "https://api.example.com/mcp"))
+    token = token_with_audience("https://api.example.com/mcp")
+
+    status, = gated.call(rack_env(path: "/mcp", scheme: "http", host: "internal",
+                                  headers: { "Authorization" => "Bearer #{token}" }))
+
+    expect(status).to eq(200)
+    expect(probe.ran?).to be(true)
+  end
+
+  context "with per-zone resource mode" do
+    let(:zone_map) do
+      {
+        "a" => "https://api.example.com/a/mcp",
+        "b" => "https://api.example.com/b/mcp"
+      }
+    end
+    let(:path_zone_resolver) do
+      lambda do |env|
+        match = env["PATH_INFO"].to_s.match(%r{\A/([^/]+)/mcp\z})
+        match ? match[1] : nil
+      end
+    end
+
+    def per_zone_middleware(resolver: path_zone_resolver)
+      verifier = Keycardai::OAuth::TokenVerifier.new(
+        issuer: base_issuer,
+        resource_identifiers_by_zone: zone_map,
+        http_client: zone_http
+      )
+      described_class.new(probe, verifier: verifier, zone_resolver: resolver)
+    end
+
+    it "16: resolves zone without a token for anonymous challenge and verifies zone token without warning" do
+      gated = nil
+      expect { gated = per_zone_middleware }.not_to output.to_stderr
+
+      anon_status, anon_headers, = gated.call(rack_env(path: "/a/mcp"))
+      token = token_with_audience("https://api.example.com/a/mcp",
+                                  issuer: zone_a_issuer, key: zone_a_key, kid: "kid-a")
+      ok_status, = gated.call(rack_env(path: "/a/mcp", headers: { "Authorization" => "Bearer #{token}" }))
+
+      expect(anon_status).to eq(401)
+      expect(anon_headers["www-authenticate"])
+        .to eq('Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/a/mcp"')
+      expect(ok_status).to eq(200)
+      expect(probe.ran?).to be(true)
+    end
+
+    it "16a: zone a token with zone b audience yields 401 invalid_token with zone a metadata URL" do
+      gated = per_zone_middleware
+      wrong_aud = token_with_audience("https://api.example.com/b/mcp",
+                                      issuer: zone_a_issuer, key: zone_a_key, kid: "kid-a")
+
+      status, headers, = gated.call(rack_env(path: "/a/mcp", headers: { "Authorization" => "Bearer #{wrong_aud}" }))
+
+      expect(status).to eq(401)
+      expect(headers["www-authenticate"]).to include(
+        'error="invalid_token"',
+        'resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/a/mcp"'
+      )
+      expect(headers["www-authenticate"]).not_to include("/b/mcp")
+    end
+
+    it "16b: resource_identifiers_by_zone with resource_identifier or allow_any_audience raises ConfigurationError" do
+      expect do
+        Keycardai::OAuth::TokenVerifier.new(
+          issuer: base_issuer,
+          resource_identifier: "https://api.example.com/mcp",
+          resource_identifiers_by_zone: zone_map,
+          http_client: zone_http
+        )
+      end.to raise_error(Keycardai::OAuth::ConfigurationError)
+
+      expect do
+        Keycardai::OAuth::TokenVerifier.new(
+          issuer: base_issuer,
+          resource_identifiers_by_zone: zone_map,
+          allow_any_audience: true,
+          http_client: zone_http
+        )
+      end.to raise_error(Keycardai::OAuth::ConfigurationError)
+    end
+
+    it "16c: unresolved or unconfigured zone fails closed with 401 and no resource_metadata" do
+      gated = per_zone_middleware
+
+      none_status, none_headers, = gated.call(rack_env(path: "/other"))
+      unknown_status, unknown_headers, = gated.call(rack_env(path: "/z/mcp"))
+
+      expect(none_status).to eq(401)
+      expect(none_headers["www-authenticate"]).to eq("Bearer")
+      expect(unknown_status).to eq(401)
+      expect(unknown_headers["www-authenticate"]).to eq("Bearer")
+    end
+
+    it "16d: per-zone mode with a token-only resolver raises ConfigurationError at construction" do
+      token_only = ->(_env, _token) { "a" }
+
+      expect { per_zone_middleware(resolver: token_only) }
+        .to raise_error(Keycardai::OAuth::ConfigurationError)
+      expect { per_zone_middleware(resolver: nil) }
+        .to raise_error(Keycardai::OAuth::ConfigurationError)
+    end
+  end
+
+  context "with shared discovery for token-keyed zones" do
+    let(:shared_url) { "https://api.example.com/mcp" }
+    let(:shared_zone_map) { { "a" => shared_url, "b" => shared_url } }
+
+    it "17: advertises shared metadata URL anonymously and verifies tokens from both zones without warning" do
+      verifier = nil
+      expect do
+        verifier = Keycardai::OAuth::TokenVerifier.new(
+          issuer: base_issuer,
+          multi_resource: true,
+          resource_identifiers_by_zone: shared_zone_map,
+          audiences: [shared_url],
+          http_client: zone_http
+        )
+      end.not_to output.to_stderr
+      gated = described_class.new(probe, verifier: verifier)
+
+      anon_status, anon_headers, = gated.call(rack_env(path: "/mcp"))
+      tok_a = token_with_audience(shared_url, issuer: zone_a_issuer, key: zone_a_key, kid: "kid-a")
+      tok_b = token_with_audience(shared_url, issuer: zone_b_issuer, key: zone_b_key, kid: "kid-b")
+      status_a, = gated.call(rack_env(path: "/mcp", headers: { "Authorization" => "Bearer #{tok_a}" }))
+      status_b, = gated.call(rack_env(path: "/mcp", headers: { "Authorization" => "Bearer #{tok_b}" }))
+
+      expect(anon_status).to eq(401)
+      expect(anon_headers["www-authenticate"])
+        .to eq('Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp"')
+      expect(status_a).to eq(200)
+      expect(status_b).to eq(200)
+    end
+
+    it "17a: shared discovery with differing zone identifiers raises ConfigurationError" do
+      expect do
+        Keycardai::OAuth::TokenVerifier.new(
+          issuer: base_issuer,
+          multi_resource: true,
+          resource_identifiers_by_zone: { "a" => shared_url, "b" => "https://api.example.com/other" },
+          audiences: [shared_url],
+          http_client: zone_http
+        )
+      end.to raise_error(Keycardai::OAuth::ConfigurationError)
+    end
+  end
+
+  it "Integration 2: token issued for another resource is 401 when resource_identifier is configured" do
+    provider = Keycardai::MCP::AuthProvider.new(
+      zone_url: zone_issuer,
+      resource_identifier: "https://api.example.com/mcp",
+      http_client: zone_http
+    )
     gated = described_class.new(probe, verifier: provider.token_verifier)
-    matching = token_with_audience("resource-b")
-    foreign = token_with_audience("resource-c")
 
-    expect(gated.call(rack_env(headers: { "Authorization" => "Bearer #{matching}" })).first).to eq(200)
-    expect(gated.call(rack_env(headers: { "Authorization" => "Bearer #{foreign}" })).first).to eq(401)
+    status, headers, = gated.call(
+      rack_env(path: "/mcp", headers: { "Authorization" => "Bearer #{foreign_resource_token}" })
+    )
+
+    expect(status).to eq(401)
+    expect(headers["www-authenticate"]).to include('error="invalid_token"')
+    expect(probe.ran?).to be(false)
   end
 
   # Infrastructure failures: the zone's keys or metadata could not be fetched,
@@ -249,7 +600,8 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
   end
 
   def unavailable_middleware(http)
-    verifier = Keycardai::OAuth::TokenVerifier.new(issuers: zone_issuer, audiences: "https://tool.example.com",
+    verifier = Keycardai::OAuth::TokenVerifier.new(issuers: zone_issuer,
+                                                   resource_identifier: "https://tool.example.com",
                                                    http_client: http)
     described_class.new(probe, verifier: verifier)
   end

@@ -4,34 +4,86 @@ module Keycardai
   module MCP
     # Rack middleware verifying the Authorization bearer token against the
     # zone's JWKS. Fail-closed: unauthenticated requests are rejected with an
-    # RFC 6750 challenge advertising the RFC 9728 resource_metadata URL, and
-    # never reach the app. On success the verified AccessToken is stored in
-    # the Rack env (Keycardai::MCP.auth_info).
+    # RFC 6750 challenge, and never reach the app. On success the verified
+    # AccessToken is stored in the Rack env (Keycardai::MCP.auth_info).
     #
     #   use Keycardai::MCP::RequireBearerAuth,
-    #       verifier: Keycardai::OAuth::TokenVerifier.new(issuers: zone_url, audiences: resource_id),
+    #       verifier: Keycardai::OAuth::TokenVerifier.new(
+    #         issuers: zone_url,
+    #         resource_identifier: "https://api.example.com/mcp"
+    #       ),
     #       required_scopes: ["mcp:tools"]
     #
     # Route-level gating is this same middleware applied per route with a
     # required_scopes set; every configured scope must be present (all-of), a
     # missing one yielding 403 insufficient_scope.
     class RequireBearerAuth
-      # @param app [#call] the downstream Rack app
-      # @param verifier [#verify_token] a TokenVerifier
-      # @param required_scopes [Array<String>, String, nil] all-of scope set
-      # @raise [Keycardai::OAuth::ConfigurationError] nil verifier; an auth
-      #   boundary with no verifier is a programming error caught at boot
-      def initialize(app, verifier:, required_scopes: nil)
-        raise Keycardai::OAuth::ConfigurationError, "RequireBearerAuth requires a verifier" if verifier.nil?
+      # @return [Keycardai::OAuth::ResourceBinding, nil]
+      attr_reader :resource_binding
 
+      # @param app [#call] the downstream Rack app
+      # @param verifier [#verify_token, nil] a TokenVerifier
+      # @param zone_url [String, nil] zone issuer URL (builds a TokenVerifier when verifier is omitted)
+      # @param issuer [String, nil] alias for zone_url / base issuer for zone modes
+      # @param required_scopes [Array<String>, String, nil] all-of scope set
+      # @param resource_identifier [String, nil] exact HTTP(S) URL or URN in single-resource mode
+      # @param resource_identifiers_by_zone [Hash{String => String}, nil] zone ID to identifier map
+      # @param multi_resource [Boolean] explicit multi-resource or shared-discovery opt-in
+      # @param allow_any_audience [Boolean] explicit opt-out from audience validation
+      # @param audiences [String, Array<String>, nil] accepted audiences in multi_resource or legacy mode
+      # @param zone_resolver [#call, nil] request-only zone selector `(env) -> zone_id` for per-zone mode
+      # @param http_client [#get, nil] transport used when constructing a verifier from zone_url
+      # @raise [Keycardai::OAuth::ConfigurationError] invalid mode, missing verifier, or verifier mismatch
+      def initialize(app, verifier: nil, zone_url: nil, issuer: nil, required_scopes: nil,
+                     resource_identifier: nil, resource_identifiers_by_zone: nil,
+                     multi_resource: false, allow_any_audience: false, audiences: nil,
+                     zone_resolver: nil, http_client: nil)
         @app = app
-        @verifier = verifier
         @required_scopes = Array(required_scopes)
+        @zone_resolver = zone_resolver
+        @verifier, @resource_binding = resolve_verifier_and_binding(
+          verifier: verifier, base_issuer: issuer || zone_url, http_client: http_client,
+          mode_options: {
+            resource_identifier: resource_identifier,
+            resource_identifiers_by_zone: resource_identifiers_by_zone,
+            multi_resource: multi_resource,
+            allow_any_audience: allow_any_audience,
+            audiences: audiences
+          }
+        )
+        validate_zone_resolver! if @resource_binding&.per_zone?
       end
 
       def call(env)
+        binding = effective_binding(env)
+        env[ENV_RESOURCE_BINDING] = binding if binding
+        return enforce_scopes(env, env[ENV_AUTH_INFO], binding, env[ENV_ZONE_ID]) if env[ENV_AUTH_INFO]
+        return call_per_zone(env, binding) if binding&.per_zone?
+
+        authenticate_request(env, binding, nil)
+      end
+
+      private
+
+      def call_per_zone(env, binding)
+        zone_id = resolve_request_zone(env)
+        unless zone_id && binding.zone_identifiers.key?(zone_id)
+          return RackSupport.challenge_response(env, status: 401, binding: binding, include_metadata: false)
+        end
+
+        env[ENV_ZONE_ID] = zone_id
+        authenticate_request(env, binding, zone_id)
+      end
+
+      def effective_binding(env)
+        @resource_binding || env[ENV_RESOURCE_BINDING]
+      end
+
+      def authenticate_request(env, binding, zone_id)
         header = env["HTTP_AUTHORIZATION"]
-        return RackSupport.challenge_response(env, status: 401) if header.nil? || header.empty?
+        if header.nil? || header.empty?
+          return RackSupport.challenge_response(env, status: 401, binding: binding, zone_id: zone_id)
+        end
 
         parts = header.split
         return [400, { "content-type" => "application/json" }, ['{"error":"invalid_request"}']] if parts.length != 2
@@ -39,48 +91,115 @@ module Keycardai
         scheme, token = parts
         unless scheme.casecmp("bearer").zero?
           return RackSupport.challenge_response(env, status: 401, error: "invalid_token",
-                                                     description: "unsupported authorization scheme")
+                                                     description: "unsupported authorization scheme",
+                                                     binding: binding, zone_id: zone_id)
         end
 
-        authorize(env, token)
+        authorize(env, token, binding, zone_id)
       end
 
-      private
-
-      def authorize(env, token)
-        access_token, failure = verify(token)
+      def authorize(env, token, binding, zone_id)
+        access_token, failure = verify(token, zone_id)
         if failure == :unavailable
           return RackSupport.json_response({ "error" => "temporarily_unavailable" }, status: 503)
         end
-        return RackSupport.challenge_response(env, status: 401, error: "invalid_token", description: failure) if failure
-
-        missing = @required_scopes - access_token.scopes
-        unless missing.empty?
-          return RackSupport.challenge_response(env, status: 403, error: "insufficient_scope",
-                                                     description: "missing required scopes: #{missing.join(" ")}")
+        if failure
+          return RackSupport.challenge_response(env, status: 401, error: "invalid_token",
+                                                     description: failure, binding: binding, zone_id: zone_id)
         end
 
         env[ENV_AUTH_INFO] = access_token
+        enforce_scopes(env, access_token, binding, zone_id)
+      end
+
+      def enforce_scopes(env, access_token, binding, zone_id)
+        missing = @required_scopes - access_token.scopes
+        unless missing.empty?
+          return RackSupport.challenge_response(env, status: 403, error: "insufficient_scope",
+                                                     description: "missing required scopes: #{missing.join(" ")}",
+                                                     binding: binding, zone_id: zone_id)
+        end
+
         @app.call(env)
       end
 
-      # The zone's signing keys or its authorization-server metadata could not
-      # be fetched, so verification never completed. Answered 503 with no
-      # challenge: the token was not judged, and the client should retry.
-      # A kid absent from a JWKS that did load (JWKSKeyNotFoundError) is an
-      # invalid token and keeps the 401 path.
       UNAVAILABLE_ERRORS = [
         Keycardai::OAuth::JWKSFetchError, Keycardai::OAuth::JWKSDiscoveryError,
         Keycardai::OAuth::HTTPError, Keycardai::OAuth::NetworkError
       ].freeze
       private_constant :UNAVAILABLE_ERRORS
 
-      def verify(token)
-        [@verifier.verify_token(token), nil]
+      def verify(token, zone_id)
+        token_info = zone_id ? @verifier.verify_token_for_zone(token, zone_id) : @verifier.verify_token(token)
+        [token_info, nil]
       rescue *UNAVAILABLE_ERRORS
         [nil, :unavailable]
       rescue Keycardai::Error => e
         [nil, e.message]
+      end
+
+      def resolve_request_zone(env)
+        @zone_resolver.call(env)
+      end
+
+      def resolve_verifier_and_binding(verifier:, base_issuer:, http_client:, mode_options:)
+        has_mode_opts = mode_options.values.any? { |v| v && v != false }
+        return build_verifier(base_issuer, http_client, mode_options) if verifier.nil?
+        return [verifier, verifier_binding(verifier)] unless has_mode_opts
+
+        local = Keycardai::OAuth::ResourceBinding.resolve(
+          **mode_options,
+          warn_legacy: !verifier.respond_to?(:resource_binding),
+          component: "Keycardai::MCP::RequireBearerAuth"
+        )
+        check_verifier_compatibility!(verifier, local)
+        [verifier, local]
+      end
+
+      def build_verifier(base_issuer, http_client, mode_options)
+        if base_issuer.nil? || base_issuer.empty?
+          raise Keycardai::OAuth::ConfigurationError, "RequireBearerAuth requires a verifier"
+        end
+
+        binding = Keycardai::OAuth::ResourceBinding.resolve(
+          **mode_options, component: "Keycardai::MCP::RequireBearerAuth"
+        )
+        client = http_client || Keycardai::OAuth::HTTP::NetHTTPClient.new
+        verifier = Keycardai::OAuth::TokenVerifier.new(
+          issuer: base_issuer, resource_binding: binding, http_client: client
+        )
+        [verifier, binding]
+      end
+
+      def verifier_binding(verifier)
+        verifier.respond_to?(:resource_binding) ? verifier.resource_binding : nil
+      end
+
+      def check_verifier_compatibility!(verifier, local)
+        return unless verifier.respond_to?(:resource_binding) && verifier.resource_binding
+        return if verifier.resource_binding.compatible_with?(local)
+
+        raise Keycardai::OAuth::ConfigurationError,
+              "verifier audience policy does not match RequireBearerAuth resource binding"
+      end
+
+      def validate_zone_resolver!
+        unless @zone_resolver.respond_to?(:call)
+          raise Keycardai::OAuth::ConfigurationError,
+                "per-zone resource mode requires a request zone_resolver callable without a token"
+        end
+        return unless token_only_resolver?(@zone_resolver)
+
+        raise Keycardai::OAuth::ConfigurationError,
+              "per-zone resource mode requires a resolver that can select a zone without a bearer token"
+      end
+
+      def token_only_resolver?(resolver)
+        return true if resolver.respond_to?(:token_only?) && resolver.token_only?
+        return false unless resolver.respond_to?(:parameters)
+
+        params = resolver.parameters
+        params.count { |type, _| type == :req } > 1 || params.include?(%i[keyreq token])
       end
     end
   end
