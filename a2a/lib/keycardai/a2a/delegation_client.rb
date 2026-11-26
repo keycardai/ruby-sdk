@@ -40,18 +40,21 @@ module Keycardai
         @exchange = OAuth::TokenExchangeClient.new(issuer: issuer, credential: credential,
                                                    client_id: client_id, client_secret: client_secret,
                                                    http_client: http_client || OAuth::HTTP::NetHTTPClient.new)
+        @issuer = issuer
+        @credential_class = credential ? credential.class : (OAuth::ClientSecret if client_id)
         @http_client = http_client || OAuth::HTTP::NetHTTPClient.new(max_response_bytes: nil)
         @discovery = discovery || ServiceDiscovery.new(http_client: @http_client)
         @invoke_timeout = invoke_timeout
         @wire = Wire.for(protocol_version)
       end
 
-      # Shows the token exchange client, which shows the issuer and the
-      # credential's class, and the protocol version.
+      # Shows the issuer, the credential's class, and the protocol version.
       #
       # @return [String]
       def inspect
-        "#<#{self.class} exchange=#{@exchange.inspect}, protocol_version=#{@wire.version.inspect}>"
+        credential = @credential_class&.name || @credential_class.inspect
+        "#<#{self.class} issuer=#{@issuer.inspect}, credential=#{credential}, " \
+          "protocol_version=#{@wire.version.inspect}>"
       end
       alias to_s inspect
 
