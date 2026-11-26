@@ -56,6 +56,21 @@ RSpec.describe "Resource binding review fixes" do
       expect(http.calls.map(&:url)).to all(start_with(zone.issuer))
     end
 
+    it "exchanges at the token's zone in shared discovery mode even when upstream sets a different zone alias" do
+      shared = "https://api.example.com/mcp"
+      grant = provider(resource_identifiers_by_zone: { "acme" => shared, "beta" => shared },
+                       multi_resource: true, audiences: [shared]).grant("https://a.test").new(probe)
+      env = rack_env.merge(
+        Keycardai::MCP::ENV_AUTH_INFO => zone_token(iss: zone.issuer, aud: shared),
+        Keycardai::MCP::ENV_ZONE_ID => "acme-alias"
+      )
+
+      status, = grant.call(env)
+
+      expect(status).to eq(200)
+      expect(http.calls.map(&:url)).to all(start_with(zone.issuer))
+    end
+
     it "rejects a token from an unconfigured zone without exchanging at the base issuer" do
       shared = "https://api.example.com/mcp"
       grant = provider(resource_identifiers_by_zone: { "acme" => shared, "beta" => shared },

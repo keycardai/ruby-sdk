@@ -165,7 +165,7 @@ module Keycardai
 
       def configured_zone_issuer(zone_id, token_issuer)
         zone_issuers = @resource_binding.zone_issuers(@zone_url)
-        return zone_issuers[zone_id] if zone_id
+        return zone_issuers[zone_id] if zone_id && @resource_binding.per_zone?
 
         zone_issuers.values.find { |value| value == token_issuer }
       end
