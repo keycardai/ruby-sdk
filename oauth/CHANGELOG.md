@@ -15,6 +15,16 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.14.0-keycardai-oauth (2026-11-26)
+
+
+- feat(keycardai-oauth): actor token source on the token exchange client (SDK-99) (#101)
+- * feat(keycardai-oauth): actor token source on the token exchange client (SDK-99)
+- * fix(keycardai-oauth): mark transport-shaped token source failures retryable
+- * fix(keycardai-oauth): mark only transient Fly socket errnos retryable
+- ---------
+- Co-authored-by: devin-ai-keycard <devin-ai@keycard.ai>
+
 ## 0.13.1-keycardai-oauth (2026-11-26)
 
 
