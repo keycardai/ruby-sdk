@@ -2,7 +2,7 @@
 
 require "tmpdir"
 
-# Unit Tests for keycard-sdk-spec specs/application-credentials/credential-discovery.md v2.
+# Unit Tests for keycard-sdk-spec specs/application-credentials/credential-discovery.md v3.
 RSpec.describe "Application credential discovery" do
   let(:client_env) { { "KEYCARD_CLIENT_ID" => "cid", "KEYCARD_CLIENT_SECRET" => "client-secret" } }
   let(:token_env) { { "AWS_WEB_IDENTITY_TOKEN_FILE" => token_file } }
@@ -196,6 +196,27 @@ RSpec.describe "Application credential discovery" do
 
   it "22: reports absent for an empty explicit mapping even with a configured process environment" do
     with_process_env(client_env) { expect_discovery_error({}, :absent, []) }
+  end
+
+  it "23: attaches the client id to inferred and explicitly selected WebIdentity credentials" do
+    Dir.chdir(@temp_dir) do
+      [web_env, { selector => "web_identity" }].each do |selection|
+        credential = discover(selection.merge("KEYCARD_CLIENT_ID" => "web-client"))
+        expect(credential).to be_a(Keycardai::OAuth::WebIdentity)
+        auth = credential.client_authentication(issuer: nil, endpoint: "https://example.test/token")
+        claims, = JWT.decode(auth.params.fetch("client_assertion"), nil, false)
+        expect(claims).to include("iss" => "web-client", "sub" => "web-client")
+      end
+    end
+  end
+
+  it "24: discovers inferred and explicitly selected WebIdentity credentials with an unset or empty id" do
+    [web_env, { selector => "web_identity" }].product([{}, { "KEYCARD_CLIENT_ID" => "" }]).each do |selection, id|
+      credential = discover(selection.merge(id))
+      expect(credential).to be_a(Keycardai::OAuth::WebIdentity)
+      expect { credential.check_client_authentication }
+        .to raise_error(Keycardai::OAuth::ConfigurationError, /requires a client_id/)
+    end
   end
 
   it "treats empty credential variables and the selector as unset and ignores the zone URL" do

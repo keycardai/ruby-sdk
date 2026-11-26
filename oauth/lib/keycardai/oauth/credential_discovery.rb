@@ -41,7 +41,7 @@ module Keycardai
         when "workload_identity"
           WorkloadIdentity.new(source: FileTokenSource.new(token_file_path: @token_file), client_id: @client_id)
         when "web_identity"
-          WebIdentity.new(server_name: web_identity_server_name, storage_dir: @storage_dir)
+          WebIdentity.new(server_name: web_identity_server_name, storage_dir: @storage_dir, client_id: @client_id)
         end
       end
 
