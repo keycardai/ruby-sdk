@@ -41,10 +41,27 @@ module Keycardai
         @exchange = OAuth::TokenExchangeClient.new(issuer: issuer, credential: credential,
                                                    client_id: client_id, client_secret: client_secret,
                                                    http_client: http_client || OAuth::HTTP::NetHTTPClient.new)
+        @issuer = issuer
+        @credential_class = credential ? credential.class : (OAuth::ClientSecret if client_id)
         @http_client = PeerHTTP.client(http_client, max_peer_response_bytes)
         @discovery = discovery || ServiceDiscovery.new(http_client: @http_client)
         @invoke_timeout = invoke_timeout
         @wire = Wire.for(protocol_version)
+      end
+
+      # Shows the issuer, the credential's class, and the protocol version.
+      #
+      # @return [String]
+      def inspect
+        credential = @credential_class&.name || @credential_class.inspect
+        "#<#{self.class} issuer=#{@issuer.inspect}, credential=#{credential}, " \
+          "protocol_version=#{@wire.version.inspect}>"
+      end
+      alias to_s inspect
+
+      # Used by pp.
+      def pretty_print(printer)
+        printer.text(inspect)
       end
 
       # Delegate a call to another agent: discover, exchange, invoke.
