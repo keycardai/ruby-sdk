@@ -16,6 +16,8 @@ module Keycardai
 
     # Resolves and constructs a credential from one environment mapping.
     class CredentialDiscovery
+      include PrintedForm
+
       SELECTOR = "KEYCARD_APPLICATION_CREDENTIAL_TYPE"
       STORAGE_DIR = "KEYCARD_WEB_IDENTITY_KEY_STORAGE_DIR"
       TYPES = %w[client_secret workload_identity web_identity].freeze
@@ -41,6 +43,10 @@ module Keycardai
         when "web_identity"
           WebIdentity.new(server_name: web_identity_server_name, storage_dir: @storage_dir)
         end
+      end
+
+      def inspect
+        "#<#{self.class} client_id=#{@client_id.inspect}, resolvable=#{@resolvable.inspect}>"
       end
 
       private

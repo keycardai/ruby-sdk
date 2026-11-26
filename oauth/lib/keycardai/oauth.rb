@@ -2,11 +2,13 @@
 
 require_relative "oauth/version"
 require_relative "oauth/errors"
+require_relative "oauth/printed_form"
 require_relative "oauth/http"
 require_relative "oauth/metadata_retry"
 require_relative "oauth/discovery"
 require_relative "oauth/userinfo"
 require_relative "oauth/token_types"
+require_relative "oauth/token_exchange_form"
 require_relative "oauth/token_requests"
 require_relative "oauth/client_authentication"
 require_relative "oauth/substitute_user"

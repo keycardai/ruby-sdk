@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "pp"
+
 # Conformance suite for keycard-sdk-spec specs/oauth-client/token-exchange.md.
 # Each example maps to a row of the spec's Unit Tests table.
 RSpec.describe Keycardai::OAuth::TokenExchangeClient do
@@ -28,6 +30,43 @@ RSpec.describe Keycardai::OAuth::TokenExchangeClient do
   end
 
   include_examples "token-endpoint discovery is not sticky", %w[8 9 10 11 12 13]
+
+  describe "printed forms" do
+    let(:request_form) do
+      credential = Keycardai::OAuth::WorkloadIdentity.new(source: -> { "assertion-secret" }, client_id: "cid")
+      form = credential.prepare_token_exchange_request(subject_token: "subject-secret", scope: "read")
+      form.merge!("actor_token" => "actor-secret", "actor_token_type" => Keycardai::OAuth::TokenType::ACCESS_TOKEN)
+    end
+    let(:response) do
+      http = token_http(token_payload.merge("refresh_token" => "refresh-secret", "id_token" => "id-secret"))
+      client(http).exchange_token(**request_form.transform_keys(&:to_sym).except(:grant_type))
+    end
+
+    %i[inspect to_s pretty_inspect].each do |method|
+      it "27: #{method} shows the request and response fields while leaving out the secrets" do
+        request_text = request_form.public_send(method)
+        response_text = response.public_send(method)
+
+        expect(request_text).to include("grant_type", "subject_token_type", "actor_token_type",
+                                        "client_assertion_type", "cid", "read")
+        expect(request_text).not_to include("subject-secret", "actor-secret", "assertion-secret")
+        expect(response_text).to include('token_type="Bearer"', "expires_in=300", 'scope=["read", "write"]',
+                                         "issued_token_type=")
+        expect(response_text).not_to include("at_new", "refresh-secret", "id-secret")
+      end
+    end
+
+    it "27: preserves all the tokens in to_h and JSON" do
+      expected = { "access_token" => "at_new", "refresh_token" => "refresh-secret", "id_token" => "id-secret" }
+
+      expect(response.to_h).to include(expected.transform_keys(&:to_sym))
+      expect(JSON.parse(response.to_json)).to include(expected, "raw" => include(expected))
+      expect(JSON.parse(JSON.generate(response))).to include(expected)
+      expect(JSON.parse(request_form.to_json)).to eq(request_form.to_h)
+      expect(request_form.to_h.values_at("subject_token", "actor_token", "client_assertion"))
+        .to eq(%w[subject-secret actor-secret assertion-secret])
+    end
+  end
 
   it "1: defaults grant_type to token-exchange and subject_token_type to access-token" do
     http = token_http
