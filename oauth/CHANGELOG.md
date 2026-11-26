@@ -15,6 +15,23 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.13.1-keycardai-oauth (2026-11-26)
+
+
+- fix(keycardai-oauth): leave tokens and secrets out of printed forms (SDK-126) (#105)
+- * fix(keycardai-oauth): leave tokens and secrets out of printed forms
+- TokenResponse, AccessToken, ClientRegistrationResponse and PKCE::Pair
+leave their secrets out of inspect, to_s and pp. The token clients,
+DeviceAuthorizationClient, WebIdentity, WorkloadIdentity,
+PrivateKeyManager and JWTSigner show identifiers and the credential's
+class only. to_h, raw and the readers keep the values.
+- Refs SDK-126, keycard-sdk-spec#113.
+- (cherry picked from commit e7189b803d47384f4620b5799301b283fcb60cb2)
+- * fix(keycardai-oauth): keep client authentication values out of to_json
+- ClientAuthentication is not a persisted value, so to_json falls back to the printed form and a JSON log formatter never writes the client secret or assertion. to_h still returns the values.
+- ---------
+- Co-authored-by: Larry Osakwe <23560354+Larry-Osakwe@users.noreply.github.com>
+
 ## 0.13.0-keycardai-oauth (2026-11-26)
 
 
