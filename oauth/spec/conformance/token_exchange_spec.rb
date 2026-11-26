@@ -196,13 +196,19 @@ RSpec.describe Keycardai::OAuth::TokenExchangeClient do
     end
   end
 
-  it "4f: rejects a request client_id with Basic before discovery" do
+  it "4f: rejects a request client_id with Basic before discovery and without calling actor" do
     http = token_http
-    exchange = client(http, client_id: "configured", client_secret: "secret")
+    actor_calls = 0
+    actor = lambda {
+      actor_calls += 1
+      "actor-jwt"
+    }
+    exchange = client(http, client_id: "configured", client_secret: "secret", actor: actor)
 
     expect { exchange.exchange_token(subject_token: "at_subject", client_id: "request-id") }
       .to raise_error(Keycardai::OAuth::ConfigurationError, /client_id.*HTTP Basic/)
     expect(http.calls).to be_empty
+    expect(actor_calls).to eq(0)
   end
 
   [nil, "request-id"].each do |client_id|
@@ -291,6 +297,106 @@ RSpec.describe Keycardai::OAuth::TokenExchangeClient do
       .to raise_error(Keycardai::OAuth::ProtocolError) { |e| expect(e.code).to eq("invalid_response") }
   end
 
+  it "23: calls the actor source on every exchange and sends actor_token with JWT type" do
+    http = token_http
+    calls = 0
+    tokens = %w[actor-jwt-1 actor-jwt-2]
+    source = Class.new do
+      define_method(:identity_token) do
+        calls += 1
+        tokens.shift
+      end
+    end.new
+
+    exchange = client(http, actor: source)
+    exchange.exchange_token(subject_token: "at_subject_1")
+    exchange.exchange_token(subject_token: "at_subject_2")
+
+    token_calls = http.calls.select { |call| call.url == zone.token_url }
+    expect(calls).to eq(2)
+    expect(token_calls.map(&:params)).to match([
+                                                 include(
+                                                   "actor_token" => "actor-jwt-1",
+                                                   "actor_token_type" => "urn:ietf:params:oauth:token-type:jwt"
+                                                 ),
+                                                 include(
+                                                   "actor_token" => "actor-jwt-2",
+                                                   "actor_token_type" => "urn:ietf:params:oauth:token-type:jwt"
+                                                 )
+                                               ])
+  end
+
+  it "24: sends request actor_token and actor_token_type unchanged without calling the actor source" do
+    http = token_http
+    calls = 0
+    actor = lambda {
+      calls += 1
+      "source-actor"
+    }
+
+    client(http, actor: actor).exchange_token(
+      subject_token: "at_subject",
+      actor_token: "request-actor",
+      actor_token_type: Keycardai::OAuth::TokenType::ACCESS_TOKEN
+    )
+
+    expect(calls).to eq(0)
+    expect(token_call(http).params).to include(
+      "actor_token" => "request-actor",
+      "actor_token_type" => "urn:ietf:params:oauth:token-type:access_token"
+    )
+  end
+
+  it "25: impersonate sends no actor_token fields and does not call the actor source" do
+    http = token_http
+    calls = 0
+    actor = lambda {
+      calls += 1
+      "source-actor"
+    }
+
+    client(http, actor: actor).impersonate(user_identifier: "usr_123", resource: "https://api.acme.test")
+
+    expect(calls).to eq(0)
+    expect(token_call(http).params).not_to have_key("actor_token")
+    expect(token_call(http).params).not_to have_key("actor_token_type")
+  end
+
+  it "26: surfaces actor source failures as typed errors without making any HTTP request" do
+    config_error = Keycardai::OAuth::WorkloadIdentityConfigurationError.new("missing file", source: "file")
+    config_http = token_http
+    expect { client(config_http, actor: -> { raise config_error }).exchange_token(subject_token: "at_subject") }
+      .to raise_error(Keycardai::OAuth::WorkloadIdentityConfigurationError) { |e|
+        expect(e).to equal(config_error)
+        expect(e.source).to eq("file")
+        expect(e).not_to be_retryable
+      }
+    expect(config_http.calls).to be_empty
+
+    runtime_error = Keycardai::OAuth::WorkloadIdentityRuntimeError.new(
+      "metadata down", source: "gcp-metadata", retryable: true
+    )
+    runtime_http = token_http
+    expect { client(runtime_http, actor: -> { raise runtime_error }).exchange_token(subject_token: "at_subject") }
+      .to raise_error(Keycardai::OAuth::WorkloadIdentityRuntimeError) { |e|
+        expect(e).to equal(runtime_error)
+        expect(e.source).to eq("gcp-metadata")
+        expect(e).to be_retryable
+      }
+    expect(runtime_http.calls).to be_empty
+
+    plain_http = token_http
+    plain_client = client(plain_http, actor: -> { raise IOError, "socket closed" })
+    expect { plain_client.exchange_token(subject_token: "at_subject") }
+      .to raise_error(Keycardai::OAuth::WorkloadIdentityRuntimeError) { |e|
+        expect(e.source).to eq("custom")
+        expect(e.cause).to be_a(IOError)
+        expect(e.cause.message).to eq("socket closed")
+        expect(e).not_to be_retryable
+      }
+    expect(plain_http.calls).to be_empty
+  end
+
   it "discovers the token endpoint once and caches it across calls" do
     http = token_http
     exchange = client(http)
@@ -316,5 +422,35 @@ RSpec.describe Keycardai::OAuth::TokenExchangeClient do
   it "requires client_id and client_secret together" do
     expect { client(token_http, client_id: "cid") }
       .to raise_error(Keycardai::OAuth::ConfigurationError)
+  end
+
+  it "rejects an actor that responds to neither identity_token nor call" do
+    expect { client(token_http, actor: "not-a-source") }
+      .to raise_error(Keycardai::OAuth::ConfigurationError)
+  end
+
+  it "wraps an empty token from the actor source without making any HTTP request" do
+    http = token_http
+    expect { client(http, actor: -> { "" }).exchange_token(subject_token: "at_subject") }
+      .to raise_error(Keycardai::OAuth::WorkloadIdentityRuntimeError) { |e|
+        expect(e.source).to eq("custom")
+        expect(e).not_to be_retryable
+      }
+    expect(http.calls).to be_empty
+  end
+
+  it "sends the actor token alongside an explicit client_assertion" do
+    http = token_http
+    client(http, actor: -> { "actor-jwt" }).exchange_token(
+      subject_token: "at_subject",
+      client_assertion: "assertion-jwt",
+      client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+    )
+
+    expect(token_call(http).params).to include(
+      "client_assertion" => "assertion-jwt",
+      "actor_token" => "actor-jwt",
+      "actor_token_type" => "urn:ietf:params:oauth:token-type:jwt"
+    )
   end
 end

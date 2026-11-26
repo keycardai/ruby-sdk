@@ -98,11 +98,14 @@ module Keycardai
         response = begin
           @http_client.get(url, headers: { "Metadata-Flavor" => "Google" }, timeout: @timeout)
         rescue NetworkError, ResponseBodyTooLargeError => e
-          raise WorkloadIdentityRuntimeError.new("metadata server unreachable: #{e.message}", source: "gcp-metadata")
+          retryable = e.is_a?(NetworkError) || e.retryable?
+          raise WorkloadIdentityRuntimeError.new("metadata server unreachable: #{e.message}",
+                                                 source: "gcp-metadata", retryable: retryable)
         end
         unless response.success?
+          retryable = response.status == 429 || response.status >= 500
           raise WorkloadIdentityRuntimeError.new("metadata server returned HTTP #{response.status}",
-                                                 source: "gcp-metadata")
+                                                 source: "gcp-metadata", retryable: retryable)
         end
 
         response.body
@@ -118,6 +121,11 @@ module Keycardai
     class FlyTokenSource
       DEFAULT_SOCKET_PATH = "/.fly/api"
       TOKEN_PATH = "/v1/tokens/oidc"
+      TRANSIENT_SOCKET_ERRORS = [
+        Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::ECONNABORTED,
+        Errno::ETIMEDOUT, Errno::EPIPE, Errno::EAGAIN, Errno::EWOULDBLOCK,
+        Errno::EINTR
+      ].freeze
 
       # @param audience [String, nil] included as {"aud": audience} when set
       # @param socket_path [String]
@@ -132,7 +140,9 @@ module Keycardai
         body = JSON.dump(@audience ? { "aud" => @audience } : {})
         status, response_body = post_over_socket(body)
         unless (200..299).cover?(status)
-          raise WorkloadIdentityRuntimeError.new("fly API returned HTTP #{status}", source: "fly")
+          retryable = status == 429 || status >= 500
+          raise WorkloadIdentityRuntimeError.new("fly API returned HTTP #{status}",
+                                                 source: "fly", retryable: retryable)
         end
 
         response_body
@@ -154,8 +164,9 @@ module Keycardai
           parse_http_response(socket.read)
         end
       rescue SystemCallError => e
+        retryable = TRANSIENT_SOCKET_ERRORS.any? { |err| e.is_a?(err) }
         raise WorkloadIdentityRuntimeError.new("fly API socket #{@socket_path} unreachable: #{e.message}",
-                                               source: "fly")
+                                               source: "fly", retryable: retryable)
       end
 
       def parse_http_response(raw)
