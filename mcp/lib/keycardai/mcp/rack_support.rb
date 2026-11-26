@@ -63,6 +63,11 @@ module Keycardai
         Array(access_token.audiences).intersect?(expected)
       end
 
+      def verified_issuer_for_zone?(env, zone_id, issuer)
+        auth = env[ENV_AUTH_INFO]
+        env[ENV_ZONE_ID] == zone_id && auth.respond_to?(:issuer) && auth.issuer == issuer
+      end
+
       def expected_audiences(binding, zone_id)
         return nil if binding.nil?
 

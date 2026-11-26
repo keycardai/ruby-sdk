@@ -61,6 +61,16 @@ where to authenticate. `MetadataApp` serves the RFC 9728 protected-resource
 document, proxies the zone's RFC 8414 authorization-server metadata, and serves
 `/.well-known/jwks.json`.
 
+To also check current token status, pass `introspect: true` and `credential:`
+to `RequireBearerAuth`. Use a client-authenticating credential for the
+Application that owns the protected Resource. When the verifier trusts several
+zones, pass a zone-keyed credential such as a `ClientSecret` keyed by issuer URL.
+The middleware checks every locally valid token that has the required scopes,
+without caching the result. An inactive token receives a 401 challenge;
+an introspection failure receives a 503 without a challenge. Keycard reports
+tokens issued to another client as inactive unless the Application owns the
+token's first audience. Set `timeout:` to shorten the introspection HTTP timeout.
+
 Inside the handler, the verified token is on the Rack env:
 
 ```ruby
