@@ -1,10 +1,12 @@
 # frozen_string_literal: true
 
+require_relative "introspection_metadata"
+
 module Keycardai
   module MCP
     # Checks current token status for a locally verified Rack request.
     class BearerIntrospection
-      def initialize(verifier:, credential:, http_client:, timeout:)
+      def initialize(verifier:, credential:, http_client:, timeout:, discovery_ttl:)
         @issuers = credential.respond_to?(:issuers) ? Array(credential.issuers).map { |url| url.chomp("/") } : []
         validate!(verifier, credential)
         @credential = credential
@@ -14,6 +16,7 @@ module Keycardai
         end
 
         @timeout = timeout
+        @metadata = IntrospectionMetadata.new(http_client: @http_client, timeout: timeout, ttl: discovery_ttl)
         @reported_errors = {}
         @mutex = Mutex.new
       end
@@ -37,7 +40,9 @@ module Keycardai
         end
 
         result = Keycardai::OAuth.introspect_token(
-          issuer, token: access_token.token, credential: @credential, http_client: @http_client, timeout: @timeout
+          issuer,
+          token: access_token.token, credential: @credential, metadata: @metadata.fetch(issuer),
+          http_client: @http_client, timeout: @timeout
         )
         result.active ? :active : :inactive
       rescue StandardError => e

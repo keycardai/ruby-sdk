@@ -635,6 +635,7 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
       expect(gated.call(bearer_env(token)).first).to eq(200)
       expect(gated.call(bearer_env(token)).first).to eq(401)
       expect(http.calls.count { |call| call.verb == :post }).to eq(2)
+      expect(http.calls.count { |call| call.verb == :get }).to eq(1)
     end
 
     it "23: rejects missing, non-client-authenticating, and unscoped multi-zone credentials at construction" do
@@ -661,6 +662,25 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
       expect(http.calls.last.url).to eq("#{zone_a_issuer}/inspect-token")
       expect(http.calls.last.headers["Authorization"])
         .to eq(Keycardai::OAuth::HTTP.basic_authorization("owner-a", "secret-a"))
+      expect(gated.call(bearer_env(token)).first).to eq(200)
+      expect(http.calls.last.url).to eq("#{zone_issuer}/inspect-token")
+    end
+
+    it "refreshes introspection metadata when its configured TTL expires" do
+      gated = gate(discovery_ttl: 0)
+
+      expect(gated.call(bearer_env(token)).first).to eq(200)
+      expect(gated.call(bearer_env(token)).first).to eq(200)
+      expect(http.calls.map(&:verb)).to eq(%i[get post get post])
+    end
+
+    it "paces discovery after an HTTP 503 with Retry-After" do
+      unavailable = Keycardai::OAuth::HTTP::Response.new(status: 503, headers: { "retry-after" => "60" }, body: "")
+      http = FakeHTTPClient.new { unavailable }
+      gated = gate(http_client: http)
+
+      expect { 2.times { expect_unavailable(gated) } }.to output(/introspection failed/).to_stderr
+      expect(http.calls.map(&:verb)).to eq([:get])
     end
 
     it "25: returns insufficient_scope without introspection when a required scope is missing" do

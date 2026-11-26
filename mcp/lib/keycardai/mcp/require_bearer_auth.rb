@@ -38,11 +38,13 @@ module Keycardai
       # @param introspect [Boolean] check token status after local verification and scope checks
       # @param credential [#client_authentication, nil] credential of the Application that owns the Resource
       # @param timeout [Numeric, nil] introspection HTTP request timeout in seconds
+      # @param discovery_ttl [Numeric] introspection metadata lifetime in seconds
       # @raise [Keycardai::OAuth::ConfigurationError] invalid mode, missing verifier, or verifier mismatch
       def initialize(app, verifier: nil, zone_url: nil, issuer: nil, required_scopes: nil,
                      resource_identifier: nil, resource_identifiers_by_zone: nil,
                      multi_resource: false, allow_any_audience: false, audiences: nil,
-                     zone_resolver: nil, http_client: nil, introspect: false, credential: nil, timeout: nil)
+                     zone_resolver: nil, http_client: nil, introspect: false, credential: nil, timeout: nil,
+                     discovery_ttl: IntrospectionMetadata::DEFAULT_TTL)
         @app = app
         @required_scopes = Array(required_scopes)
         @zone_resolver = zone_resolver
@@ -57,7 +59,7 @@ module Keycardai
         return unless introspect
 
         @introspection = BearerIntrospection.new(verifier: @verifier, credential: credential, http_client: http_client,
-                                                 timeout: timeout)
+                                                 timeout: timeout, discovery_ttl: discovery_ttl)
       end
 
       def call(env)
