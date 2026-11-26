@@ -204,7 +204,7 @@ module Keycardai
           raise ConfigurationError, "issuers keys must match resource_identifiers_by_zone keys"
         end
 
-        zone_map = issuers.transform_values { |v| v.to_s.chomp("/") }.freeze
+        zone_map = issuers.transform_values(&:to_s).freeze
         [zone_map.values.freeze, zone_map]
       end
 
@@ -217,12 +217,14 @@ module Keycardai
         [zone_map.values.freeze, zone_map]
       end
 
+      # Trusted issuers keep their configured spelling, so a token whose iss
+      # carries a trailing slash still matches it exactly.
       def match_zone_issuer_array(issuers)
-        normalized = issuers.map { |i| i.to_s.chomp("/") }
+        configured = issuers.map(&:to_s)
         zone_map = @resource_binding.zone_identifiers.keys.to_h do |zone_id|
-          [zone_id, find_unique_zone_issuer!(normalized, zone_id)]
+          [zone_id, find_unique_zone_issuer!(configured, zone_id)]
         end.freeze
-        unless zone_map.values.sort == normalized.sort
+        unless zone_map.values.sort == configured.sort
           raise ConfigurationError, "trusted issuers must match the zones in resource_identifiers_by_zone"
         end
 

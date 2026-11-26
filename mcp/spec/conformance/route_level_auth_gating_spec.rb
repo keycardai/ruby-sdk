@@ -62,10 +62,11 @@ RSpec.describe "Route-level auth gating" do
   end
 
   it "6: valid caller lacking a scope on a non-matching path behind an HTTP proxy gets 403 without resource_metadata" do
-    inner = gate(probe, "admin")
+    bound = FakeVerifier.new("at_rw" => access_token(scope: "read write", aud: "https://api.example.com/mcp"))
+    inner = Keycardai::MCP::RequireBearerAuth.new(probe, verifier: bound, required_scopes: ["admin"])
     outer = Keycardai::MCP::RequireBearerAuth.new(
       inner,
-      verifier: verifier,
+      verifier: bound,
       resource_identifier: "https://api.example.com/mcp"
     )
 

@@ -55,9 +55,12 @@ module Keycardai
       end
 
       def call(env)
+        upstream = env[ENV_RESOURCE_BINDING]
         binding = effective_binding(env)
         env[ENV_RESOURCE_BINDING] = binding if binding
-        return enforce_scopes(env, env[ENV_AUTH_INFO], binding, env[ENV_ZONE_ID]) if env[ENV_AUTH_INFO]
+        if env[ENV_AUTH_INFO] && reuse_upstream_auth?(upstream)
+          return enforce_scopes(env, env[ENV_AUTH_INFO], binding, env[ENV_ZONE_ID])
+        end
         return call_per_zone(env, binding) if binding&.per_zone?
 
         authenticate_request(env, binding, nil)
@@ -77,6 +80,13 @@ module Keycardai
 
       def effective_binding(env)
         @resource_binding || env[ENV_RESOURCE_BINDING]
+      end
+
+      # An upstream gate's verified token is reused only when this gate has no
+      # binding of its own or the same binding; otherwise this gate verifies
+      # the token against its own verifier and audience policy.
+      def reuse_upstream_auth?(upstream)
+        @resource_binding.nil? || (!upstream.nil? && @resource_binding.compatible_with?(upstream))
       end
 
       def authenticate_request(env, binding, zone_id)
@@ -100,6 +110,9 @@ module Keycardai
 
       def authorize(env, token, binding, zone_id)
         access_token, failure = verify(token, zone_id)
+        if failure.nil? && !RackSupport.audience_matches?(access_token, binding, zone_id)
+          failure = "token audience does not match the resource"
+        end
         if failure == :unavailable
           return RackSupport.json_response({ "error" => "temporarily_unavailable" }, status: 503)
         end

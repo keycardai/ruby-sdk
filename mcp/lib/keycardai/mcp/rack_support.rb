@@ -52,6 +52,27 @@ module Keycardai
         end
       end
 
+      # Enforce an explicit binding's audience in the middleware too, so a
+      # caller-supplied verifier that ignores audiences cannot admit a token
+      # minted for another resource.
+      def audience_matches?(access_token, binding, zone_id)
+        expected = expected_audiences(binding, zone_id)
+        return true if expected.nil?
+        return false unless access_token.respond_to?(:audiences)
+
+        Array(access_token.audiences).intersect?(expected)
+      end
+
+      def expected_audiences(binding, zone_id)
+        return nil if binding.nil?
+
+        case binding.mode
+        when :single_resource then [binding.identifier.raw]
+        when :per_zone then zone_id && [binding.zone_identifiers.fetch(zone_id).raw]
+        when :shared_discovery, :multi_resource then binding.audiences
+        end
+      end
+
       # An RFC 6750 challenge response. A nil error code produces the bare
       # challenge used for missing credentials.
       def challenge_response(env, status:, error: nil, description: nil, binding: nil,

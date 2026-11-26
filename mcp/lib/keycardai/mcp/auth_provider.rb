@@ -145,7 +145,30 @@ module Keycardai
         exchange_tokens(subject_token, resources, issuer: issuer, **)
       end
 
+      # The zone issuer a grant exchanges against. Outside zone modes this is
+      # nil (the provider's zone). In zone modes it is the verified zone's
+      # issuer, never the base issuer; :unresolved when no configured zone
+      # matches the request or the verified token.
+      #
+      # @return [String, nil, Symbol]
+      def grant_issuer(zone_id, auth_info)
+        return nil unless @resource_binding.zone_mode?
+
+        token_issuer = auth_info.respond_to?(:issuer) ? auth_info.issuer.to_s.chomp("/") : nil
+        issuer = configured_zone_issuer(zone_id, token_issuer)
+        return :unresolved if issuer.nil? || (token_issuer && token_issuer != issuer)
+
+        issuer
+      end
+
       private
+
+      def configured_zone_issuer(zone_id, token_issuer)
+        zone_issuers = @resource_binding.zone_issuers(@zone_url)
+        return zone_issuers[zone_id] if zone_id
+
+        zone_issuers.values.find { |value| value == token_issuer }
+      end
 
       def exchange_client
         @mutex.synchronize do
@@ -168,21 +191,25 @@ module Keycardai
 
         def call(env)
           auth_info = env[ENV_AUTH_INFO]
-          if auth_info.nil?
-            binding = env[ENV_RESOURCE_BINDING] || @provider.resource_binding
-            return RackSupport.challenge_response(env, status: 401, binding: binding, zone_id: env[ENV_ZONE_ID])
-          end
+          issuer = auth_info && @provider.grant_issuer(env[ENV_ZONE_ID], auth_info)
+          return challenge(env) if auth_info.nil? || issuer == :unresolved
 
           context = env[ENV_ACCESS_CONTEXT] || Keycardai::OAuth::AccessContext.new
           @provider.exchange_tokens(
             auth_info.token, @resources,
-            access_context: context, user_identifier: resolve_user(env), request_scopes: @request_scopes
+            access_context: context, user_identifier: resolve_user(env), request_scopes: @request_scopes,
+            issuer: issuer
           )
           env[ENV_ACCESS_CONTEXT] = context
           @app.call(env)
         end
 
         private
+
+        def challenge(env)
+          binding = env[ENV_RESOURCE_BINDING] || @provider.resource_binding
+          RackSupport.challenge_response(env, status: 401, binding: binding, zone_id: env[ENV_ZONE_ID])
+        end
 
         def resolve_user(env)
           @user_identifier.respond_to?(:call) ? @user_identifier.call(env) : @user_identifier
