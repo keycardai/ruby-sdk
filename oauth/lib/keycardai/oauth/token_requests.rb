@@ -125,9 +125,11 @@ module Keycardai
       def post_token_request(params, issuer: @issuer, authorization: @credential&.authorization_header(issuer: issuer))
         headers = { "Accept" => "application/json" }
         headers["Authorization"] = authorization if authorization
+        post_token_form(token_endpoint(issuer), params, headers)
+      end
 
-        response = @http_client.post_form(token_endpoint(issuer), params.compact, headers: headers,
-                                                                                  timeout: @timeout)
+      def post_token_form(endpoint, params, headers)
+        response = @http_client.post_form(endpoint, params.compact, headers: headers, timeout: @timeout)
         TokenRequests.parse_response(response)
       end
     end

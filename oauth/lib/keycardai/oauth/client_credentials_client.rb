@@ -14,9 +14,8 @@ module Keycardai
       include TokenRequests
 
       # @param issuer [String] the zone's issuer URL
-      # @param credential [Object, nil] a Basic-auth credential (ClientSecret);
-      #   exclusive with client_id/client_secret. Assertion-based credentials
-      #   supply their assertion through the request fields instead.
+      # @param credential [Object, nil] provides client authentication;
+      #   exclusive with client_id/client_secret
       # @param client_id [String, nil] shared-secret client id (HTTP Basic)
       # @param client_secret [String, nil] shared-secret client secret;
       #   provide both or neither
@@ -39,7 +38,7 @@ module Keycardai
       # @param scope [String, nil] space-separated scopes for the token
       # @param resource [String, nil] RFC 8707 resource indicator
       # @param client_assertion [String, nil] client-authentication assertion,
-      #   form-encoded in the body
+      #   form-encoded in the body in place of configured client authentication
       # @param client_assertion_type [String, nil]
       # @param client_id [String, nil] the application credential the
       #   assertion authenticates as, form-encoded beside client_assertion;
@@ -50,12 +49,7 @@ module Keycardai
       # @raise [HTTPError, ProtocolError, NetworkError]
       def request_token(scope: nil, resource: nil, client_assertion: nil, client_assertion_type: nil,
                         client_id: nil, issuer: nil)
-        target = issuer || @issuer
-        if client_id && @credential&.authorization_header(issuer: target)
-          raise ConfigurationError, "client_id is sent beside client_assertion, not with HTTP Basic"
-        end
-
-        post_token_request(
+        post_credentials(
           {
             "grant_type" => GrantType::CLIENT_CREDENTIALS,
             "scope" => scope,
@@ -64,8 +58,51 @@ module Keycardai
             "client_assertion_type" => client_assertion_type,
             "client_id" => client_id
           },
-          issuer: target
+          issuer || @issuer
         )
+      end
+
+      private
+
+      def post_credentials(params, issuer)
+        if params["client_assertion"] || !@credential
+          return post_token_request(params, issuer: issuer, authorization: nil)
+        end
+        # A ClientSecret resolves its Basic header without the token endpoint,
+        # so an unconfigured zone fails before any discovery request.
+        if @credential.is_a?(ClientSecret) || !@credential.respond_to?(:client_authentication)
+          return post_with_header(params, issuer)
+        end
+
+        post_authenticated_credentials(params, issuer)
+      end
+
+      def post_authenticated_credentials(params, issuer)
+        reject_request_client_fields(params)
+        endpoint = token_endpoint(issuer)
+        auth = @credential.client_authentication(issuer: issuer, endpoint: endpoint)
+        form = params.merge(auth.params)
+        post_token_form(endpoint, form, { "Accept" => "application/json" }.merge(auth.headers))
+      end
+
+      def post_with_header(params, issuer)
+        authorization = @credential.authorization_header(issuer: issuer)
+        reject_body_client_id(params) if authorization
+        post_token_request(params, issuer: issuer, authorization: authorization)
+      end
+
+      def reject_body_client_id(params)
+        return unless params["client_id"]
+
+        raise ConfigurationError, "client_id is sent beside client_assertion, not with HTTP Basic"
+      end
+
+      # The configured credential supplies client_id and client_assertion_type,
+      # so a request value would be dropped or overridden: fail instead.
+      def reject_request_client_fields(params)
+        return unless params["client_id"] || params["client_assertion_type"]
+
+        raise ConfigurationError, "client_id and client_assertion_type are sent only beside a request client_assertion"
       end
     end
   end

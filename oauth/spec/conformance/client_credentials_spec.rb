@@ -4,6 +4,7 @@
 # Each example maps to a row of the spec's Unit Tests table.
 RSpec.describe Keycardai::OAuth::ClientCredentialsClient do
   let(:zone) { ZoneFixture.new }
+  let(:assertion_type) { "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" }
   let(:token_payload) do
     { "access_token" => "at_workload", "token_type" => "Bearer", "expires_in" => 600, "scope" => "read" }
   end
@@ -77,6 +78,71 @@ RSpec.describe Keycardai::OAuth::ClientCredentialsClient do
       "client_id" => "app_123"
     )
     expect(call.headers).not_to have_key("Authorization")
+  end
+
+  ["app_123", nil].each do |id|
+    it "4b: applies a configured workload assertion (client_id: #{id.inspect})" do
+      http = token_http
+      credential = Keycardai::OAuth::WorkloadIdentity.new(source: -> { "platform-token" }, client_id: id)
+      allow(credential).to receive(:client_authentication).and_call_original
+
+      client(http, credential: credential).request_token(scope: "read")
+
+      expect(credential).to have_received(:client_authentication)
+        .with(issuer: zone.issuer, endpoint: zone.token_url).once
+      call = token_call(http)
+      expect(call.params).to eq({
+        "grant_type" => "client_credentials", "scope" => "read",
+        "client_assertion" => "platform-token", "client_assertion_type" => assertion_type,
+        "client_id" => id
+      }.compact)
+      expect(call.headers).not_to have_key("Authorization")
+    end
+  end
+
+  it "4c: rejects a credential with separate Basic shorthand at construction" do
+    http = token_http
+    credential = Keycardai::OAuth::ClientSecret.new("configured", "secret")
+
+    expect { client(http, credential: credential, client_id: "raw", client_secret: "secret") }
+      .to raise_error(Keycardai::OAuth::ConfigurationError)
+    expect(http.calls).to be_empty
+  end
+
+  [Keycardai::OAuth::ClientSecret, Keycardai::OAuth::WorkloadIdentity].product(["request-id", nil]).each do |type, id|
+    it "4d: bypasses configured #{type.name.split("::").last} for an explicit assertion (client_id: #{id.inspect})" do
+      http = token_http
+      credential = instance_double(type)
+
+      client(http, credential: credential).request_token(
+        client_assertion: "request-jwt", client_assertion_type: assertion_type, client_id: id
+      )
+
+      call = token_call(http)
+      expect(call.params).to eq({
+        "grant_type" => "client_credentials", "client_assertion" => "request-jwt",
+        "client_assertion_type" => assertion_type, "client_id" => id
+      }.compact)
+      expect(call.headers).not_to have_key("Authorization")
+    end
+  end
+
+  it "rejects a request client_id beside a configured assertion credential before any request" do
+    http = token_http
+    credential = Keycardai::OAuth::WorkloadIdentity.new(source: -> { "platform-token" }, client_id: "app_123")
+
+    expect { client(http, credential: credential).request_token(client_id: "other") }
+      .to raise_error(Keycardai::OAuth::ConfigurationError)
+    expect(http.calls).to be_empty
+  end
+
+  it "fails an unconfigured zone on a multi-zone ClientSecret before discovery" do
+    http = token_http
+    credential = Keycardai::OAuth::ClientSecret.new({ zone.issuer => %w[cid csecret] })
+
+    expect { client(http, credential: credential).request_token(issuer: "https://unknown.example") }
+      .to raise_error(Keycardai::OAuth::ConfigurationError)
+    expect(http.calls).to be_empty
   end
 
   it "rejects a body client_id on a Basic-authenticated client before any request" do

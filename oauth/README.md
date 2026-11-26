@@ -14,7 +14,7 @@ bundle add keycardai-oauth
 Capabilities:
 
 - Token exchange and impersonation (RFC 8693)
-- Client credentials grant (RFC 6749 §4.4)
+- Client credentials grant (RFC 6749 §4.4), with an application credential bound on `ClientCredentialsClient`
 - Authorization code + PKCE, including the challenge-driven loopback flow (RFC 8252)
 - Device authorization grant (RFC 8628)
 - Token revocation (RFC 7009)
