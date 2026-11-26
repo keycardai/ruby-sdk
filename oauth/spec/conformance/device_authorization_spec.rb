@@ -420,6 +420,21 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
   end
 
   describe "poll once" do
+    it "returns a complete token response even if the transport returns after the request deadline" do
+      elapsed = 0.0
+      allow(Process).to receive(:clock_gettime).and_call_original
+      allow(Process).to receive(:clock_gettime).with(Process::CLOCK_MONOTONIC) { elapsed }
+      late_reply = lambda do
+        elapsed = 0.25
+        json_response(token_payload)
+      end
+      http = zone_http(polls: [late_reply])
+
+      token = client(http, timeout: 0.2).poll_token(authorization)
+
+      expect(token.access_token).to eq("at_device")
+    end
+
     it "7: POSTs the device_code grant with the same client authentication and no resource or scope" do
       http = zone_http(polls: [json_response(token_payload)])
       device = client(http, client_id: nil, credential: recording_credential)

@@ -298,7 +298,6 @@ module Keycardai
           http.request_deadline = deadline
           configure_http(http, request)
           response, body, body_error = execute_request(http, request)
-          deadline.remaining
           build_response(response, body, body_error)
         rescue *TRANSPORT_ERRORS => e
           raise NetworkError, "request to #{uri.host} failed: #{e.class}"

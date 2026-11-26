@@ -439,7 +439,7 @@ module Keycardai
         remaining = deadline&.remaining
         # Injected transports keep the numeric timeout interface.
         timeout = @http_client.instance_of?(HTTP::NetHTTPClient) ? deadline : remaining
-        @http_client.post_form(endpoint, params, headers: headers, timeout: timeout).tap { deadline&.remaining }
+        @http_client.post_form(endpoint, params, headers: headers, timeout: timeout)
       end
     end
     private_constant :DeviceRequest
