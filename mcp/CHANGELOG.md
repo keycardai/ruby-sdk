@@ -14,6 +14,18 @@ protected-resource with path insertion, an RFC 8414 authorization-server proxy,
 and JWKS), and an AuthProvider whose `grant` middleware exchanges the caller's
 token per resource into an AccessContext. Wraps no MCP SDK.
 
+## 0.1.5-keycardai-mcp (2026-11-26)
+
+
+- fix(keycardai-mcp): leave the credential out of AuthProvider printed forms (SDK-126) (#106)
+- * fix(keycardai-mcp): leave the credential out of AuthProvider's printed forms
+- Refs SDK-126.
+- (cherry picked from commit 88fcd4e09c1e697fb6e86aabb5bf1cd2d6d11429)
+- * test(keycardai-mcp): cover caller-supplied credentials in printed forms
+- ---------
+- Co-authored-by: Larry Osakwe <23560354+Larry-Osakwe@users.noreply.github.com>
+Co-authored-by: devin-ai-keycard <devin-ai@keycard.ai>
+
 ## 0.1.4-keycardai-mcp (2026-11-25)
 
 

@@ -11,6 +11,8 @@ module Keycardai
     #
     # Holds no shared secret and contributes no Basic header.
     class WorkloadIdentity
+      include PrintedForm
+
       attr_reader :client_id
 
       # @param source [#identity_token, #call] supplies the platform-signed
@@ -22,8 +24,57 @@ module Keycardai
       # @raise [ConfigurationError] when the source is missing or has neither
       #   an identity_token method nor call
       def initialize(source:, client_id: nil)
-        @source = normalize_source(source)
+        @source = self.class.normalize_source(source)
         @client_id = client_id
+      end
+
+      # Normalize an identity-token source: return an object that responds to
+      # +identity_token+, wrap a bare callable in +FunctionTokenSource+, or
+      # raise +ConfigurationError+.
+      #
+      # @param source [#identity_token, #call]
+      # @return [#identity_token]
+      # @raise [ConfigurationError]
+      def self.normalize_source(source)
+        return source if source.respond_to?(:identity_token)
+        return FunctionTokenSource.new(source) if source.respond_to?(:call)
+
+        raise ConfigurationError, "WorkloadIdentity source must respond to identity_token or call"
+      end
+
+      # Fetch a token from a normalized identity-token source. Passes
+      # +WorkloadIdentityConfigurationError+ and +WorkloadIdentityRuntimeError+
+      # through untouched, and wraps any other failure or empty token in
+      # +WorkloadIdentityRuntimeError+ with the source identifier and cause.
+      #
+      # @param source [#identity_token]
+      # @return [String]
+      # @raise [WorkloadIdentityConfigurationError, WorkloadIdentityRuntimeError]
+      def self.fetch_token(source)
+        token = source.identity_token
+        if token.nil? || token.empty?
+          raise WorkloadIdentityRuntimeError.new("identity token source returned an empty token",
+                                                 source: source_identifier_for(source))
+        end
+
+        token
+      rescue WorkloadIdentityRuntimeError, WorkloadIdentityConfigurationError
+        raise
+      rescue StandardError => e
+        raise WorkloadIdentityRuntimeError.new("identity token source failed: #{e.message}",
+                                               source: source_identifier_for(source))
+      end
+
+      def self.source_identifier_for(source)
+        source.respond_to?(:source_identifier) ? source.source_identifier : "custom"
+      end
+      private_class_method :source_identifier_for
+
+      # Shows the client ID and the source's class.
+      #
+      # @return [String]
+      def inspect
+        "#<#{self.class} client_id=#{@client_id.inspect}, source=#{PrintedForm.type_of(@source)}>"
       end
 
       # Assertion-based authentication contributes no Basic header.
@@ -47,14 +98,9 @@ module Keycardai
       # @raise [WorkloadIdentityRuntimeError] the source failed to produce a token
       def prepare_token_exchange_request(subject_token:, resource: nil, audience: nil, scope: nil,
                                          token_endpoint: nil, issuer: nil)
-        {
-          "grant_type" => GrantType::TOKEN_EXCHANGE,
-          "subject_token" => subject_token,
-          "subject_token_type" => TokenType::ACCESS_TOKEN,
-          "resource" => resource,
-          "audience" => audience,
-          "scope" => scope
-        }.compact.merge(client_authentication(issuer: issuer, endpoint: token_endpoint).params)
+        authentication = client_authentication(issuer: issuer, endpoint: token_endpoint)
+        TokenExchangeForm.build(subject_token: subject_token, resource: resource, audience: audience, scope: scope,
+                                authentication: authentication.params)
       end
 
       # Client authentication for one request, as form fields: the source's
@@ -91,30 +137,8 @@ module Keycardai
 
       private
 
-      def normalize_source(source)
-        return source if source.respond_to?(:identity_token)
-        return FunctionTokenSource.new(source) if source.respond_to?(:call)
-
-        raise ConfigurationError, "WorkloadIdentity source must respond to identity_token or call"
-      end
-
       def fetch_identity_token
-        token = @source.identity_token
-        if token.nil? || token.empty?
-          raise WorkloadIdentityRuntimeError.new("identity token source returned an empty token",
-                                                 source: source_identifier)
-        end
-
-        token
-      rescue WorkloadIdentityRuntimeError, WorkloadIdentityConfigurationError
-        raise
-      rescue StandardError => e
-        raise WorkloadIdentityRuntimeError.new("identity token source failed: #{e.message}",
-                                               source: source_identifier)
-      end
-
-      def source_identifier
-        @source.respond_to?(:source_identifier) ? @source.source_identifier : "custom"
+        self.class.fetch_token(@source)
       end
 
       # Adapter making a bare callable usable as an identity-token source.

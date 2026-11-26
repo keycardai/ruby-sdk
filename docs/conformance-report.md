@@ -9,10 +9,10 @@ reproducible with the commands in the last section.
 | | |
 | --- | --- |
 | Gems | `keycardai-oauth`, `keycardai-mcp`, `keycardai-a2a` |
-| Capability specs covered | 19 of 22, 2 excluded on purpose, `delegated-access/as-itself` an open gap |
+| Capability specs covered | 21 of 24, 2 excluded on purpose, `delegated-access/as-itself` an open gap |
 | Partial coverage | `authorization-code-pkce` rows 8 to 11, 19, and 22 (the stateless web-app begin/complete pair) are unshipped; Ruby covers the flow's building blocks, refresh and the code exchange with a credential, and the loopback `authenticate` |
-| Conformance examples | 186 (plus 6 load/sanity checks, 192 total) |
-| Live-zone integration rows | 13 of 13 passing against a real zone |
+| RSpec examples | 570 across the three gems, including 26 for credential discovery |
+| Live-zone integration rows | 13 passing against a real zone; 2 credential discovery rows not run |
 | A2A delegation checks | 11 of 11 hermetic, plus a live run |
 | MCP server end-to-end checks | 8 of 8 hermetic, against the official `mcp` gem |
 | Ruby versions | 3.2, 3.4, 4.0 in CI |
@@ -42,6 +42,7 @@ which are labelled without a row number.
 | `application-credentials/client-secret` | `client_secret_spec.rb` | 6 |
 | `application-credentials/web-identity` | `web_identity_spec.rb` | 8 |
 | `application-credentials/workload-identity` | `workload_identity_spec.rb` | 10 |
+| `application-credentials/credential-discovery` | `credential_discovery_spec.rb` | 26 (22 unit rows) |
 | `delegated-access/access-context` | `access_context_spec.rb` | 19 |
 | `delegated-access/impersonation` | `impersonation_spec.rb` | 5 |
 | `multi-zone-and-ops/multi-zone-support` | `multi_zone_support_spec.rb` | 6 |
@@ -59,7 +60,7 @@ which are labelled without a row number.
 
 | Spec | Suite | Examples |
 | --- | --- | --- |
-| `a2a/a2a-delegation` | `a2a_delegation_spec.rb` | 7 |
+| `a2a/a2a-delegation` | `a2a_delegation_spec.rb` | 27 |
 
 ## Live-zone results
 
@@ -83,6 +84,8 @@ rows against a real Keycard zone. Objects are provisioned by
 | bearer-token-verification-middleware | 1: a real token through the Rack middleware | pass |
 | access-context | 1: multi-resource grant populates an AccessContext | pass |
 | access-context | 2: one failing resource yields `partial_error` | pass |
+| credential-discovery | 1: discover a client secret and exchange a token against a live zone | not run |
+| credential-discovery | 2: discover a projected token and exchange using the same application | not run |
 
 Two further end-to-end suites run without any zone:
 `examples/mcp-server/bin/selftest` (8 checks, an MCP server on the official
@@ -163,15 +166,14 @@ UserInfo, and the spec-version 3 authorization-code revision:
 
 | Spec | Why |
 | --- | --- |
-| `application-credentials/eks-workload-identity` | Folded into `workload-identity` as a deprecated alias in the sibling SDKs. Ruby is new and ships no deprecated surface; `FileTokenSource` covers the contract, including the same four-variable discovery list at exact parity. |
+| `application-credentials/eks-workload-identity` | `FileTokenSource` covers the four-variable discovery list. Credential discovery accepts `eks_workload_identity` as a deprecated selector alias, not as a separate credential type. |
 | `multi-zone-and-ops/per-user-token-cache` | Bound to `@keycardai/cloudflare`; no Ruby counterpart. |
 | `base.md` | Cross-cutting terminology and principles, no Testing table. Its rules are honoured throughout, notably constructor-injected configuration with no implicit environment reads. |
 | `framework-integrations/*` | Governance documents rather than generatable contracts. The Rack integration is judged against the FRAMEWORK-INTEGRATIONS.md checklist instead. |
 
-Every capability is now proven live, including the production `grant` path. It
-exchanges an inbound caller token for one token per downstream resource, and an
-impersonated token stands in for the verified inbound token, which is what makes
-the row headless: no browser login is involved. Reaching it needed the zone's
+The production `grant` path exchanges an inbound caller token for one token
+per downstream resource. An impersonated token stands in for the verified
+inbound token, so the row requires no browser login. Reaching it needed the zone's
 resources to carry an `application_id`, since re-exchange is gated on the
 calling client owning the resource in the token's `aud`.
 
@@ -180,8 +182,8 @@ calling client owning the resource in the token's `aud`.
 Ruby-specific expression choices, with the reasoning, are in
 [idiom-profile.md](idiom-profile.md). The load-bearing ones: sync-only with
 thread-safe caches, keyword arguments, `Keycardai::Error` as the taxonomy root,
-Rack as the framework seam, no implicit environment reads except the blessed
-`FileTokenSource` discovery list, and `get_` prefixes dropped in favour of
+Rack as the framework seam, opt-in credential discovery and platform path
+discovery through `FileTokenSource`, and `get_` prefixes dropped in favour of
 predicates ending in `?` while `set_*` mutator names are kept because they are
 contract.
 
@@ -189,7 +191,7 @@ contract.
 
 ```sh
 bundle install
-bundle exec rake                      # 192 examples + RuboCop
+bundle exec rake                      # gem specs + RuboCop
 
 cd examples/mcp-server
 bin/selftest                          # 8 checks, no zone needed

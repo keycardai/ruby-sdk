@@ -14,6 +14,20 @@ module Keycardai
       end
     end
 
+    # The environment does not describe a single usable application credential.
+    class CredentialDiscoveryError < ConfigurationError
+      # @return [Symbol] absent, ambiguous, incomplete, unknown_type, or not_satisfiable
+      attr_reader :reason
+      # @return [Array<String>] canonical credential types the environment configures
+      attr_reader :resolvable
+
+      def initialize(message, reason:, resolvable:)
+        super(message)
+        @reason = reason
+        @resolvable = resolvable.dup.freeze
+      end
+    end
+
     # A transport-level failure (DNS, TLS, timeout) wrapping the underlying
     # exception as +cause+.
     class NetworkError < Keycardai::Error
@@ -203,6 +217,11 @@ module Keycardai
         super(message)
         @source = source
       end
+
+      # @return [Boolean] configuration errors are not retryable
+      def retryable?
+        false
+      end
     end
 
     # A workload-identity source failed at request time: file unreadable or
@@ -212,9 +231,15 @@ module Keycardai
       # @return [String]
       attr_reader :source
 
-      def initialize(message, source:)
+      def initialize(message, source:, retryable: false)
         super(message)
         @source = source
+        @retryable = retryable
+      end
+
+      # @return [Boolean] whether repeating the fetch unchanged could succeed
+      def retryable?
+        @retryable
       end
     end
   end

@@ -8,6 +8,8 @@ module Keycardai
     # endpoint discovery with caching, shared-secret (HTTP Basic) client
     # authentication, and RFC 6749 §5.2 error parsing. Not public API.
     module TokenRequests
+      include PrintedForm
+
       # Default lifetime of a discovered token endpoint, in seconds; the same
       # knob and default as the JWKS keyring's jwks_uri cache.
       DEFAULT_DISCOVERY_TTL = 3600
@@ -59,6 +61,14 @@ module Keycardai
                        error: payload["error"], error_description: payload["error_description"],
                        error_uri: payload["error_uri"], reason: payload["reason"],
                        status: response.status, body: response.body)
+      end
+
+      # Shows the issuer and the credential's class. A credential defined
+      # outside the SDK may print its own secrets.
+      #
+      # @return [String]
+      def inspect
+        "#<#{self.class} issuer=#{@issuer.inspect}, credential=#{PrintedForm.type_of(@credential)}>"
       end
 
       private

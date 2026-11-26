@@ -20,18 +20,24 @@ module Keycardai
       # @param client_id [String, nil] shared-secret client id (HTTP Basic)
       # @param client_secret [String, nil] shared-secret client secret;
       #   provide both or neither
+      # @param actor [#identity_token, #call, nil] supplies the acting
+      #   workload's identity token, sent as actor_token with type JWT on
+      #   every exchange unless the request sets its own; never sent on
+      #   impersonate
       # @param http_client [#get, #post_form] pluggable transport
       # @param timeout [Numeric, nil] request timeout in seconds
       # @param discovery_ttl [Numeric] token-endpoint cache lifetime in seconds
       # @param clock [#call] returns the current Time; override in tests
       # @raise [ConfigurationError] when only one of client_id/client_secret is
-      #   given, or a credential is combined with a raw pair
-      def initialize(issuer:, credential: nil, client_id: nil, client_secret: nil,
+      #   given, a credential is combined with a raw pair, or actor responds
+      #   to neither identity_token nor call
+      def initialize(issuer:, credential: nil, client_id: nil, client_secret: nil, actor: nil,
                      http_client: HTTP::NetHTTPClient.new, timeout: nil,
                      discovery_ttl: TokenRequests::DEFAULT_DISCOVERY_TTL, clock: MetadataRetry::WALL_CLOCK)
         initialize_token_client(issuer: issuer, credential: credential, client_id: client_id,
                                 client_secret: client_secret, http_client: http_client, timeout: timeout,
                                 discovery_ttl: discovery_ttl, clock: clock)
+        @actor = actor ? WorkloadIdentity.normalize_source(actor) : nil
       end
 
       # Exchange a subject token (RFC 8693).
@@ -43,7 +49,8 @@ module Keycardai
       # @param scope [String, nil] space-separated scopes for the issued token
       # @param requested_token_type [String, nil]
       # @param actor_token [String, nil] the acting party's token, for explicit
-      #   delegation; requires actor_token_type
+      #   delegation; overrides the client's actor source when set and requires
+      #   actor_token_type
       # @param actor_token_type [String, nil]
       # @param client_assertion [String, nil] client-authentication assertion,
       #   form-encoded in the body; requires client_assertion_type
@@ -57,6 +64,8 @@ module Keycardai
       #   authentication. Defaults to the client's issuer.
       # @return [TokenResponse]
       # @raise [ConfigurationError] when the request sets client_id with HTTP Basic
+      # @raise [WorkloadIdentityConfigurationError, WorkloadIdentityRuntimeError]
+      #   when the configured actor source fails
       # @raise [OAuthError] an RFC 6749 §5.2 error response (invalid_grant,
       #   invalid_target, invalid_scope, unauthorized_client, ...)
       # @raise [HTTPError, ProtocolError, NetworkError]
@@ -85,8 +94,9 @@ module Keycardai
 
       # Impersonate a named user: a substitute-user token exchange for
       # privileged operations performed on the user's behalf. No actor token
-      # is sent; the authorization server derives the acting party from client
-      # authentication and records it in the issued token's act chain.
+      # is sent even when an actor source is configured; the authorization
+      # server derives the acting party from client authentication and records
+      # it in the issued token's act chain.
       #
       # @param user_identifier [String] the target user (becomes sub)
       # @param resource [String] target resource for the issued token
@@ -98,13 +108,13 @@ module Keycardai
       def impersonate(user_identifier:, resource:, scope: nil, issuer: nil)
         raise ArgumentError, "resource must be a non-empty string" if resource.nil? || resource.empty?
 
-        exchange_token(
-          subject_token: OAuth.build_substitute_user_token(user_identifier),
-          subject_token_type: TokenType::SUBSTITUTE_USER,
-          resource: resource,
-          scope: scope,
-          issuer: issuer
-        )
+        overrides = {
+          "subject_token_type" => TokenType::SUBSTITUTE_USER,
+          "resource" => resource,
+          "scope" => scope
+        }.compact
+        post_exchange(OAuth.build_substitute_user_token(user_identifier), overrides, issuer || @issuer,
+                      include_actor: false)
       end
 
       private
@@ -115,23 +125,33 @@ module Keycardai
 
       # An explicit client_assertion authenticates the client on its own, so
       # the credential adds no Basic header and prepares no assertion.
-      def post_exchange(subject_token, overrides, issuer)
+      def post_exchange(subject_token, overrides, issuer, include_actor: true)
         params = { "grant_type" => GrantType::TOKEN_EXCHANGE, "subject_token" => subject_token,
                    "subject_token_type" => TokenType::ACCESS_TOKEN }.merge(overrides)
-        return post_token_request(params, issuer: issuer, authorization: nil) if overrides["client_assertion"]
+        if overrides["client_assertion"]
+          params = with_actor(params) if include_actor
+          return post_token_request(params, issuer: issuer, authorization: nil)
+        end
 
         authorization = @credential&.authorization_header(issuer: issuer)
         reject_client_id_with_basic(overrides, authorization)
+        params = with_actor(params) if include_actor
         params = with_assertion(params, issuer) if @credential && !authorization
         post_token_request(params, issuer: issuer, authorization: authorization)
       end
 
       # A request client_id never travels beside HTTP Basic: fail before any
-      # HTTP request, including discovery.
+      # HTTP request, including discovery, and before calling the actor source.
       def reject_client_id_with_basic(overrides, authorization)
         return unless overrides.key?("client_id") && authorization&.match?(/\ABasic\s/i)
 
         raise ConfigurationError, "token exchange client_id cannot be sent with HTTP Basic"
+      end
+
+      def with_actor(params)
+        return params if !@actor || params.key?("actor_token")
+
+        params.merge("actor_token" => WorkloadIdentity.fetch_token(@actor), "actor_token_type" => TokenType::JWT)
       end
 
       def with_assertion(params, issuer)

@@ -24,6 +24,8 @@ module Keycardai
     # A token operation for a zone not in the map fails closed: the credential
     # raises rather than fall back to another zone's secret.
     class ClientSecret
+      include PrintedForm
+
       # @overload initialize(client_id, client_secret)
       # @overload initialize(issuer_map)
       #   @param issuer_map [Hash{String => Array(String, String)}]
@@ -86,12 +88,6 @@ module Keycardai
         shown = multi_zone? ? "issuers=#{issuers.inspect}" : "client_id=#{@pair.first.inspect}"
         "#<#{self.class} #{shown}>"
       end
-      alias to_s inspect
-
-      # Used by pp.
-      def pretty_print(printer)
-        printer.text(inspect)
-      end
 
       # Build the token-exchange form parameters. Client authentication goes
       # in the Basic header, never in the body.
@@ -105,14 +101,7 @@ module Keycardai
       # @return [Hash]
       def prepare_token_exchange_request(subject_token:, resource: nil, audience: nil, scope: nil,
                                          token_endpoint: nil, issuer: nil)
-        {
-          "grant_type" => GrantType::TOKEN_EXCHANGE,
-          "subject_token" => subject_token,
-          "subject_token_type" => TokenType::ACCESS_TOKEN,
-          "resource" => resource,
-          "audience" => audience,
-          "scope" => scope
-        }.compact
+        TokenExchangeForm.build(subject_token: subject_token, resource: resource, audience: audience, scope: scope)
       end
 
       private

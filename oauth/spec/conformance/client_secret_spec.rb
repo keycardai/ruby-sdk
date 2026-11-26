@@ -1,8 +1,18 @@
 # frozen_string_literal: true
 
+require "pp"
+
 # Conformance suite for keycard-sdk-spec specs/application-credentials/client-secret.md.
 # Each example maps to a row of the spec's Unit Tests table.
 RSpec.describe Keycardai::OAuth::ClientSecret do
+  it "9: prints the header name and leaves out the Basic authorization value" do
+    credential = described_class.new("cid", "csecret")
+    auth = credential.client_authentication(issuer: "https://acme.test", endpoint: "https://acme.test/token")
+    shown = '#<data Keycardai::OAuth::ClientAuthentication headers=["Authorization"], params=[]>'
+
+    expect([auth.inspect, auth.to_s, auth.pretty_inspect]).to eq([shown, shown, "#{shown}\n"])
+  end
+
   it "1: a single-zone credential returns the Basic authorization header" do
     credential = described_class.new("cid", "csecret")
 

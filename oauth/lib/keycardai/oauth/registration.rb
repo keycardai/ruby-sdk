@@ -12,6 +12,19 @@ module Keycardai
       :client_id, :client_secret, :client_id_issued_at, :client_secret_expires_at,
       :registration_access_token, :registration_client_uri, :raw
     ) do
+      include PrintedForm::Serializable
+
+      # Shows every member except client_secret and
+      # registration_access_token, and only the field names of +raw+. #to_h
+      # and +raw+ keep the values.
+      #
+      # @return [String]
+      def inspect
+        shown = to_h.except(:client_secret, :registration_access_token, :raw)
+                    .map { |name, value| "#{name}=#{value.inspect}" }
+        "#<data #{self.class} #{shown.join(", ")}, raw=#{raw.to_h.keys.inspect}>"
+      end
+
       # @param field [String] a response field name
       # @return [Object, nil] the field's value from the full response body
       def [](field)
