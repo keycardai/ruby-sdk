@@ -482,7 +482,7 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
                 %w[client_id cid]])
     end
 
-    it "7: a forwarding credential wrapper does not add undeclared timeout keywords" do
+    it "a forwarding credential wrapper does not add undeclared timeout keywords" do
       wrapper = Class.new do
         def initialize(credential)
           @credential = credential
