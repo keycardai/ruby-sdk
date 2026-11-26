@@ -80,7 +80,6 @@ module Keycardai
           return RackSupport.challenge_response(env, status: 401, binding: binding, include_metadata: false)
         end
 
-        env[ENV_ZONE_ID] = zone_id
         authenticate_request(env, binding, zone_id)
       end
 
@@ -110,7 +109,8 @@ module Keycardai
       end
 
       def authorize(env, token, binding, zone_id)
-        access_token, failure = verify(token, zone_id, env[ENV_AUTH_INFO]&.issuer)
+        upstream_issuer = env[ENV_AUTH_INFO]&.issuer if zone_id == env[ENV_ZONE_ID]
+        access_token, failure = verify(token, zone_id, upstream_issuer)
         if failure.nil? && !RackSupport.audience_matches?(access_token, binding, zone_id)
           failure = "token audience does not match the resource"
         end
@@ -136,6 +136,7 @@ module Keycardai
         introspection_failure = @introspection&.failure_response(env, access_token, binding, zone_id)
         return introspection_failure if introspection_failure
 
+        env[ENV_ZONE_ID] = zone_id if zone_id
         env[ENV_AUTH_INFO] = access_token
         @app.call(env)
       end
@@ -149,11 +150,8 @@ module Keycardai
       def verify(token, zone_id, upstream_issuer)
         pinned = zone_id && @resource_binding
         token_info = pinned ? @verifier.verify_token_for_zone(token, zone_id) : @verifier.verify_token(token)
-        if zone_id && !pinned && token_info.issuer != upstream_issuer
-          return [nil, "token issuer does not match the upstream zone"]
-        end
-
-        [token_info, nil]
+        trusted_issuer = !zone_id || pinned || token_info.issuer == upstream_issuer
+        trusted_issuer ? [token_info, nil] : [nil, "token issuer does not match the selected zone"]
       rescue *UNAVAILABLE_ERRORS
         [nil, :unavailable]
       rescue Keycardai::Error => e
