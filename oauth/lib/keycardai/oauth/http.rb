@@ -5,6 +5,9 @@ require "net/http"
 require "uri"
 require "zlib"
 
+require_relative "request_deadline"
+require_relative "deadline_socket"
+
 module Keycardai
   module OAuth
     # Pluggable HTTP transport. Every network operation in the SDK goes
@@ -188,22 +191,19 @@ module Keycardai
       # Default transport backed by Net::HTTP. TLS is used for https URLs.
       #
       # Sessions are kept open and reused per instance, per thread, per
-      # (host, port, scheme). A thread only ever touches its own sessions, so
-      # the request path takes no lock; a small mutex guards only the registry
-      # of per-thread session maps, and dead threads are swept from it whenever
-      # it is touched. There is no transparent retry: a keepalive connection
-      # the server dropped while idle surfaces as NetworkError on the next
-      # request, the same as any other failure.
+      # (host, port, scheme, timeout policy). A thread only ever touches its own
+      # sessions, so the request path takes no lock; a small mutex guards only
+      # the registry of per-thread session maps, and dead threads are swept from
+      # it whenever it is touched. There is no transparent retry: a keepalive
+      # connection the server dropped while idle surfaces as NetworkError on the
+      # next request, the same as any other failure.
       #
       # Call {#close} when no requests are in flight to finish every session.
       # An instance that is never closed, such as the throwaway client built by
       # module-level function defaults, keeps its sessions until it is garbage
       # collected, which closes the underlying sockets.
       class NetHTTPClient
-        # Open, read and write timeout for a request whose caller passed no
-        # timeout: 10 seconds, so a request to the zone cannot wait for
-        # Net::HTTP's 60. Each one bounds a single step of the request, such as
-        # one read from the socket, not the whole request.
+        # Timeout in seconds when the caller supplies none.
         DEFAULT_TIMEOUT = 10
 
         # What a request raises when the connection or the response fails:
@@ -285,12 +285,15 @@ module Keycardai
         private
 
         def perform(uri, request, timeout)
-          http = session_for(uri)
+          deadline = timeout.is_a?(RequestDeadline)
+          http = session_for(uri, deadline: deadline)
           configure_http(http, timeout, request)
           response, body, body_error = execute_request(http, request)
           build_response(response, body, body_error)
         rescue *TRANSPORT_ERRORS => e
           raise NetworkError, "request to #{uri.host} failed: #{e.class}"
+        ensure
+          http.request_deadline = nil if deadline && http
         end
 
         def execute_request(http, request)
@@ -311,10 +314,12 @@ module Keycardai
         end
 
         def configure_http(http, timeout, request)
-          http.open_timeout = timeout || DEFAULT_TIMEOUT
-          http.read_timeout = timeout || DEFAULT_TIMEOUT
-          http.write_timeout = timeout || DEFAULT_TIMEOUT
-          http.start unless http.started?
+          if timeout.is_a?(RequestDeadline)
+            http.start_with_deadline(timeout)
+          else
+            http.open_timeout = http.read_timeout = http.write_timeout = timeout || DEFAULT_TIMEOUT
+            http.start unless http.started?
+          end
           # Net::HTTP does not report a gzip stream that ends early, so the
           # client decompresses the body itself. Assigning Accept-Encoding
           # turns off Net::HTTP's decompression.
@@ -325,13 +330,14 @@ module Keycardai
           Response.new(status: response.code.to_i, headers: response.to_hash, body: body, body_error: body_error)
         end
 
-        def session_for(uri)
+        def session_for(uri, deadline:)
           sessions = sessions_for_current_thread
-          key = [uri.host, uri.port, uri.scheme]
+          key = [uri.host, uri.port, uri.scheme, deadline]
           http = sessions[key]
           return http if http&.started?
 
           http = Net::HTTP.new(uri.host, uri.port)
+          http.extend(DeadlineSession) if deadline
           http.use_ssl = uri.scheme == "https"
           # Net::HTTP retries a failed GET once by default.
           http.max_retries = 0

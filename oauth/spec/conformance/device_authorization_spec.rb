@@ -414,12 +414,44 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
 
       device.poll_token(device.request_device_authorization)
 
-      expect(http.calls.map { |call| [call.url, call.timeout] })
-        .to eq([[zone.metadata_url, 3], [device_url, 3], [zone.token_url, 3]])
+      expect(http.calls.map(&:url)).to eq([zone.metadata_url, device_url, zone.token_url])
+      expect(http.calls.map(&:timeout)).to match([3, be_between(0, 3), be_between(0, 3)])
     end
   end
 
   describe "poll once" do
+    it "does not open a connection when the proxy lookup exhausts the poll budget" do
+      stub_const("ENV", { "http_proxy" => "http://127.0.0.1:3128" })
+      elapsed = 0.0
+      allow(Process).to receive(:clock_gettime).and_call_original
+      allow(Process).to receive(:clock_gettime).with(Process::CLOCK_MONOTONIC) { elapsed }
+      expect(IPSocket).to receive(:getaddress).with("zone.example") do
+        elapsed = 0.25
+        "192.0.2.1"
+      end
+      expect(TCPSocket).not_to receive(:open)
+      metadata = parsed_metadata(zone.metadata(device: true).merge("token_endpoint" => "http://zone.example/token"))
+      device = described_class.new(metadata: metadata, client_id: "cid", timeout: 0.2)
+
+      expect { device.poll_token(authorization) }
+        .to raise_error(Keycardai::OAuth::NetworkError, "request deadline exceeded")
+    end
+
+    it "returns a complete token response even if the transport returns after the request deadline" do
+      elapsed = 0.0
+      allow(Process).to receive(:clock_gettime).and_call_original
+      allow(Process).to receive(:clock_gettime).with(Process::CLOCK_MONOTONIC) { elapsed }
+      late_reply = lambda do
+        elapsed = 0.25
+        json_response(token_payload)
+      end
+      http = zone_http(polls: [late_reply])
+
+      token = client(http, timeout: 0.2).poll_token(authorization)
+
+      expect(token.access_token).to eq("at_device")
+    end
+
     it "7: POSTs the device_code grant with the same client authentication and no resource or scope" do
       http = zone_http(polls: [json_response(token_payload)])
       device = client(http, client_id: nil, credential: recording_credential)
@@ -448,6 +480,55 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
       expect(sole_call(http, zone.token_url).params)
         .to eq([["grant_type", "urn:ietf:params:oauth:grant-type:device_code"], %w[device_code dc_123],
                 %w[client_id cid]])
+    end
+
+    it "a forwarding credential wrapper does not add undeclared timeout keywords" do
+      wrapper = Class.new do
+        def initialize(credential)
+          @credential = credential
+        end
+
+        def client_authentication(...)
+          @credential.client_authentication(...)
+        end
+      end
+      credential = wrapper.new(Keycardai::OAuth::ClientSecret.new("cid", "secret"))
+      http = zone_http(polls: [json_response(token_payload)])
+
+      token = client(http, client_id: nil, credential: credential, timeout: 0.2).poll_token(authorization)
+
+      expect(token.access_token).to eq("at_device")
+      expect(sole_call(http, zone.token_url).headers.fetch("Authorization")).to eq("Basic Y2lkOnNlY3JldA==")
+    end
+
+    it "does not call a credential's own reflection method before authenticating" do
+      credential = recording_credential
+      credential.define_singleton_method(:method) { |_| raise "credential reflection must not run" }
+      http = zone_http(polls: [json_response(token_payload)])
+
+      token = client(http, client_id: nil, credential: credential, timeout: 0.2).poll_token(authorization)
+
+      expect(token.access_token).to eq("at_device")
+      expect(credential.calls).to eq([[zone.issuer, zone.token_url]])
+    end
+
+    it "authenticates through a proxy when method reflection cannot find client_authentication" do
+      delegate = recording_credential
+      proxy = Object.new
+      proxy.define_singleton_method(:respond_to?) do |name, *args|
+        name == :client_authentication || super(name, *args)
+      end
+      proxy.define_singleton_method(:method_missing) do |name, **options|
+        raise "unexpected method: #{name}" unless name == :client_authentication
+
+        delegate.client_authentication(**options)
+      end
+      http = zone_http(polls: [json_response(token_payload)])
+
+      token = client(http, client_id: nil, credential: proxy, timeout: 0.2).poll_token(authorization)
+
+      expect(token.access_token).to eq("at_device")
+      expect(delegate.calls).to eq([[zone.issuer, zone.token_url]])
     end
 
     [
@@ -954,11 +1035,106 @@ RSpec.describe Keycardai::OAuth::DeviceAuthorizationClient do
   describe "poll until done over a socket" do
     after { @server&.close }
 
-    def served_client(token_response, timeout: nil)
-      @server = RawHTTPServer.new { token_response }
-      metadata = parsed_metadata(zone.metadata(device: true).merge("token_endpoint" => @server.url("/oauth/token")))
-      described_class.new(metadata: metadata, client_id: "cid", timeout: timeout, clock: clock,
+    def served_client(token_response, timeout: nil, **client_auth)
+      @server = RawHTTPServer.new do |_, path|
+        token_response.is_a?(Hash) ? token_response.fetch(path) : token_response
+      end
+      metadata = parsed_metadata(zone.metadata(device: true).merge(
+                                   "token_endpoint" => @server.url("/oauth/token"),
+                                   "device_authorization_endpoint" => @server.url("/oauth/device")
+                                 ))
+      client_auth = { client_id: "cid" } if client_auth.empty?
+      described_class.new(metadata: metadata, **client_auth, timeout: timeout, clock: clock,
                           sleep: clock.method(:sleep))
+    end
+
+    def slow_credential(delay)
+      Object.new.tap do |credential|
+        credential.define_singleton_method(:client_authentication) do |**|
+          sleep(delay)
+          Keycardai::OAuth::ClientAuthentication.new
+        end
+      end
+    end
+
+    {
+      request_device_authorization: ["/oauth/device", :device_payload],
+      poll_token: ["/oauth/token", :token_payload],
+      wait_for_token: ["/oauth/token", :token_payload]
+    }.each do |operation, (path, payload)|
+      it "28: #{operation} stops a response body that trickles past the request deadline" do
+        response = RawHTTPServer.trickle_json(public_send(payload), delay: 0.05, chunks: 8)
+        device = served_client({ path => response }, timeout: 0.2)
+        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        args = operation == :request_device_authorization ? [] : [authorization]
+        error = operation == :wait_for_token ? Keycardai::OAuth::DevicePollError : Keycardai::OAuth::NetworkError
+
+        expect { device.public_send(operation, *args) }.to raise_error(error) { |e|
+          if operation == :wait_for_token
+            expect(e.interval).to eq(10)
+            expect(e.cause).to be_a(Keycardai::OAuth::NetworkError)
+          else
+            expect(e).to be_retryable
+          end
+        }
+        expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 0.35
+      end
+    end
+
+    it "28: wait_for_token does not send a poll when the credential outlasts the request deadline" do
+      device = served_client(RawHTTPServer.json(200, token_payload), timeout: 0.2, credential: slow_credential(0.25))
+
+      expect { device.wait_for_token(authorization) }.to raise_error(Keycardai::OAuth::DevicePollError) { |e|
+        expect(e.interval).to eq(10)
+        expect(e.cause).to be_a(Keycardai::OAuth::NetworkError)
+      }
+      expect(@server.connections).to eq(0)
+    end
+
+    it "28: client authentication and the response body share the same request deadline" do
+      response = RawHTTPServer.trickle_json(token_payload, delay: 0.04, chunks: 4)
+      device = served_client(response, timeout: 0.2, credential: slow_credential(0.12))
+
+      expect { device.poll_token(authorization) }.to raise_error(Keycardai::OAuth::NetworkError) { |e|
+        expect(e).to be_retryable
+      }
+      expect(@server.connections).to eq(1)
+    end
+
+    it "28: a credential can use a timeout in seconds or a deadline Time to stop cooperatively" do
+      seen = []
+      credential = Object.new
+      credential.define_singleton_method(:client_authentication) do |timeout: nil, deadline: nil, **|
+        seen.replace([timeout, deadline])
+        sleep(timeout || 0.25)
+        Keycardai::OAuth::ClientAuthentication.new
+      end
+      device = served_client(:hang, timeout: 0.2, credential: credential)
+      wall_time = Time.now
+
+      expect { device.poll_token(authorization) }.to raise_error(Keycardai::OAuth::NetworkError)
+      expect(seen).to match([be_between(0, 0.2), be_between(wall_time, wall_time + 0.21)])
+      expect(@server.connections).to eq(0)
+    end
+
+    [
+      Timeout::Error.new("token source timed out"),
+      Keycardai::OAuth::NetworkError.new("token source offline")
+    ].each do |error|
+      it "27: a credential's own #{error.class} propagates unchanged even after the request deadline" do
+        credential = Object.new
+        credential.define_singleton_method(:client_authentication) do |**|
+          sleep(0.25)
+          raise error
+        end
+        device = served_client(:hang, timeout: 0.2, credential: credential)
+
+        expect { device.wait_for_token(authorization) }.to raise_error(error.class) { |e|
+          expect(e).to equal(error)
+          expect(e).not_to respond_to(:interval)
+        }
+        expect(@server.connections).to eq(0)
+      end
     end
 
     it "28: a deadline longer than the request timeout does not extend a poll that does not respond" do

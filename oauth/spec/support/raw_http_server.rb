@@ -8,7 +8,8 @@ require "zlib"
 # a body that does not decompress or a request that times out. The block gets
 # each request's method and path and returns the raw response bytes, :hang
 # to accept the request and never answer, :close to close the connection
-# without answering, or [bytes, :close] to send the bytes and then close.
+# without answering, [bytes, :close] to send the bytes and then close, or
+# a callable that writes the response to the socket.
 # Connections stay open between requests until the client closes them, and
 # +connections+ counts how many the server accepted.
 class RawHTTPServer
@@ -38,6 +39,17 @@ class RawHTTPServer
   # A complete response with a JSON body.
   def self.json(status, payload)
     response(status, JSON.dump(payload), "Content-Type" => "application/json")
+  end
+
+  def self.trickle_json(payload, delay:, chunks:)
+    headers, body = json(200, payload).split("\r\n\r\n", 2)
+    lambda do |socket|
+      socket.write("#{headers}\r\n\r\n")
+      body.bytes.each_slice((body.bytesize.to_f / chunks).ceil) do |bytes|
+        sleep(delay)
+        socket.write(bytes.pack("C*"))
+      end
+    end
   end
 
   # A response that says Content-Encoding: gzip, with a body that is not gzip.
@@ -113,10 +125,14 @@ class RawHTTPServer
       break socket.close if response == :close
       break socket.write(response.first) && socket.close if response.is_a?(Array)
 
-      socket.write(response)
+      send_response(socket, response)
     end
   rescue IOError, SystemCallError
     nil
+  end
+
+  def send_response(socket, response)
+    response.respond_to?(:call) ? response.call(socket) : socket.write(response)
   end
 
   # @return [Array(String, String), nil] the method and path, or nil at the
