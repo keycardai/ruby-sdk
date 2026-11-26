@@ -14,6 +14,12 @@ protected-resource with path insertion, an RFC 8414 authorization-server proxy,
 and JWKS), and an AuthProvider whose `grant` middleware exchanges the caller's
 token per resource into an AccessContext. Wraps no MCP SDK.
 
+## 0.2.0-keycardai-mcp (2026-11-26)
+
+
+- feat(keycardai-mcp): bind metadata, challenges and gating to one resource identifier (#128)
+- Requires keycardai-oauth >= 0.17.0 for ResourceBinding. Implements keycard-sdk-spec#151 (Refs SDK-14).
+
 ## 0.1.5-keycardai-mcp (2026-11-26)
 
 
