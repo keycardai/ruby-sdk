@@ -727,6 +727,16 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
       expect(probe.ran?).to be(true)
     end
 
+    it "re-verifies a stacked request without requiring an issuer on the upstream auth object" do
+      upstream_auth = double("upstream auth", scopes: [])
+      upstream = FakeVerifier.new(token => upstream_auth)
+      outer = described_class.new(gate, verifier: upstream)
+
+      expect(outer.call(bearer_env(token)).first).to eq(200)
+      expect(http.calls.last.url).to eq("#{zone_issuer}/inspect-token")
+      expect(probe.ran?).to be(true)
+    end
+
     it "logs each distinct introspection failure once without logging the server body" do
       responses = [401, 401, 500]
       http = introspection_http do

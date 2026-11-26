@@ -109,8 +109,7 @@ module Keycardai
       end
 
       def authorize(env, token, binding, zone_id)
-        upstream_issuer = env[ENV_AUTH_INFO]&.issuer if zone_id == env[ENV_ZONE_ID]
-        access_token, failure = verify(token, zone_id, upstream_issuer)
+        access_token, failure = verify(token, zone_id, env)
         if failure.nil? && !RackSupport.audience_matches?(access_token, binding, zone_id)
           failure = "token audience does not match the resource"
         end
@@ -147,12 +146,12 @@ module Keycardai
       ].freeze
       private_constant :UNAVAILABLE_ERRORS
 
-      def verify(token, zone_id, upstream_issuer)
+      def verify(token, zone_id, env)
         pinned = zone_id && (@resource_binding || @verifier.respond_to?(:verify_token_for_zone))
         return [@verifier.verify_token_for_zone(token, zone_id), nil] if pinned
 
         token_info = @verifier.verify_token(token)
-        trusted_issuer = zone_id.nil? || token_info.issuer == upstream_issuer
+        trusted_issuer = zone_id.nil? || RackSupport.verified_issuer_for_zone?(env, zone_id, token_info.issuer)
         trusted_issuer ? [token_info, nil] : [nil, "token issuer does not match the selected zone"]
       rescue *UNAVAILABLE_ERRORS
         [nil, :unavailable]
