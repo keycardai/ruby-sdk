@@ -39,6 +39,7 @@ module Keycardai
     def self.introspect_token(issuer = nil, token: nil, credential: nil, metadata: nil, token_type_hint: nil,
                               http_client: HTTP::NetHTTPClient.new, timeout: nil)
       raise ConfigurationError, "token must be a non-empty string" unless token.is_a?(String) && !token.empty?
+      raise ConfigurationError, "token introspection requires a credential" unless credential
 
       ClientAuth.validate(credential: credential, client_id: nil)
       metadata, issuer = Introspection.resolve_metadata(issuer, metadata, http_client: http_client, timeout: timeout)

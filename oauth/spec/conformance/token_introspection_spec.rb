@@ -141,9 +141,10 @@ RSpec.describe Keycardai::OAuth do
   end
 
   it "11: rejects a missing or incapable credential before making any request" do
-    [nil, Object.new].each do |credential|
-      expect { introspect(credential: credential) }.to raise_error(described_class::ConfigurationError)
-    end
+    expect { introspect(credential: nil) }
+      .to raise_error(described_class::ConfigurationError, "token introspection requires a credential")
+    expect { introspect(credential: Object.new) }
+      .to raise_error(described_class::ConfigurationError, /does not provide client authentication/)
     expect(http.requests).to be_empty
   end
 
