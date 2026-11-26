@@ -118,10 +118,11 @@ RSpec.describe Keycardai::OAuth::WebIdentity do
                       "WebIdentity requires the endpoint URL as the assertion audience")
   end
 
-  # The Ruby credential takes client_id at construction, so client
-  # authentication without one cannot be called.
-  it "8: a missing client_id is a configuration error at construction, before any assertion is signed" do
-    expect { credential(client_id: nil) }.to raise_error(Keycardai::OAuth::ConfigurationError)
+  it "8: a missing client_id is a configuration error before signing a client assertion" do
+    identity = credential(client_id: nil)
+    expect { identity.client_authentication(issuer: nil, endpoint: "https://example.test/token") }
+      .to raise_error(Keycardai::OAuth::ConfigurationError, /client_id/)
+    expect(Dir.children(@storage_dir)).to be_empty
   end
 
   it "requires the token_endpoint when preparing a request" do
