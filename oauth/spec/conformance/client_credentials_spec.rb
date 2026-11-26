@@ -109,20 +109,20 @@ RSpec.describe Keycardai::OAuth::ClientCredentialsClient do
     expect(http.calls).to be_empty
   end
 
-  [Keycardai::OAuth::ClientSecret, Keycardai::OAuth::WorkloadIdentity].each do |type|
-    it "4d: bypasses configured #{type.name.split("::").last} for an explicit assertion" do
+  [Keycardai::OAuth::ClientSecret, Keycardai::OAuth::WorkloadIdentity].product(["request-id", nil]).each do |type, id|
+    it "4d: bypasses configured #{type.name.split("::").last} for an explicit assertion (client_id: #{id.inspect})" do
       http = token_http
       credential = instance_double(type)
 
       client(http, credential: credential).request_token(
-        client_assertion: "request-jwt", client_assertion_type: assertion_type, client_id: "request-id"
+        client_assertion: "request-jwt", client_assertion_type: assertion_type, client_id: id
       )
 
       call = token_call(http)
-      expect(call.params).to eq(
+      expect(call.params).to eq({
         "grant_type" => "client_credentials", "client_assertion" => "request-jwt",
-        "client_assertion_type" => assertion_type, "client_id" => "request-id"
-      )
+        "client_assertion_type" => assertion_type, "client_id" => id
+      }.compact)
       expect(call.headers).not_to have_key("Authorization")
     end
   end
