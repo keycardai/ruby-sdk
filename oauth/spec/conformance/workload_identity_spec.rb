@@ -209,6 +209,16 @@ RSpec.describe Keycardai::OAuth::WorkloadIdentity do
       end
     end
 
+    it "5: rejects a token file with invalid encoding at construction" do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "token")
+        File.binwrite(path, "\xFF")
+
+        expect { described_class.new(token_file_path: path, env: {}) }
+          .to raise_error(Keycardai::OAuth::WorkloadIdentityConfigurationError) { |e| expect(e.source).to eq("file") }
+      end
+    end
+
     it "6: discovers the path from the first set env var, env_var_name first when given" do
       Dir.mktmpdir do |dir|
         aws_path = File.join(dir, "aws-token")

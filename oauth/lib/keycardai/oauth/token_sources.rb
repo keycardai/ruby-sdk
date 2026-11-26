@@ -67,7 +67,7 @@ module Keycardai
         return if File.file?(@path) && !File.read(@path).strip.empty?
 
         raise WorkloadIdentityConfigurationError.new("token file #{@path} is missing or empty", source: "file")
-      rescue SystemCallError => e
+      rescue SystemCallError, ArgumentError, EncodingError => e
         raise WorkloadIdentityConfigurationError.new("token file #{@path} is unreadable: #{e.message}", source: "file")
       end
     end
