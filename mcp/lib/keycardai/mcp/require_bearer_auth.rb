@@ -148,9 +148,11 @@ module Keycardai
       private_constant :UNAVAILABLE_ERRORS
 
       def verify(token, zone_id, upstream_issuer)
-        pinned = zone_id && @resource_binding
-        token_info = pinned ? @verifier.verify_token_for_zone(token, zone_id) : @verifier.verify_token(token)
-        trusted_issuer = !zone_id || pinned || token_info.issuer == upstream_issuer
+        pinned = zone_id && (@resource_binding || @verifier.respond_to?(:verify_token_for_zone))
+        return [@verifier.verify_token_for_zone(token, zone_id), nil] if pinned
+
+        token_info = @verifier.verify_token(token)
+        trusted_issuer = zone_id.nil? || token_info.issuer == upstream_issuer
         trusted_issuer ? [token_info, nil] : [nil, "token issuer does not match the selected zone"]
       rescue *UNAVAILABLE_ERRORS
         [nil, :unavailable]

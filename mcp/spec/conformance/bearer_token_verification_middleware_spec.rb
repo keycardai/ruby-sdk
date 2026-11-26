@@ -707,6 +707,26 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
       expect(probe.ran?).to be(false)
     end
 
+    it "uses the selected zone for a wrapped per-zone verifier on a stacked introspection route" do
+      upstream = Keycardai::OAuth::TokenVerifier.new(
+        issuer: base_issuer, resource_identifiers_by_zone: { "a" => resource }, http_client: zone_http
+      )
+      local = double("wrapped per-zone verifier", issuers: upstream.issuers)
+      presented = token_with_audience(resource, issuer: zone_a_issuer, key: zone_a_key, kid: "kid-a")
+      allow(local).to receive(:verify_token).with(presented) { upstream.verify_token(presented) }
+      allow(local).to receive(:verify_token_for_zone).with(presented, "a") do
+        upstream.verify_token_for_zone(presented, "a")
+      end
+      route = described_class.new(probe, verifier: local, zone_resolver: ->(_env) { "a" },
+                                         introspect: true, credential: credential, http_client: http)
+      outer = described_class.new(route, verifier: upstream, zone_resolver: ->(_env) { "a" })
+
+      expect(outer.call(bearer_env(presented)).first).to eq(200)
+      expect(local).to have_received(:verify_token_for_zone).with(presented, "a")
+      expect(http.calls.last.url).to eq("#{zone_a_issuer}/inspect-token")
+      expect(probe.ran?).to be(true)
+    end
+
     it "logs each distinct introspection failure once without logging the server body" do
       responses = [401, 401, 500]
       http = introspection_http do
