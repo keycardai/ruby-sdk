@@ -3,8 +3,16 @@
 require "json"
 
 # Build a minimal Rack env for driving middleware directly.
-def rack_env(path: "/mcp", method: "GET", scheme: "https", host: "tool.example.com", headers: {})
-  env = { "REQUEST_METHOD" => method, "PATH_INFO" => path, "rack.url_scheme" => scheme, "HTTP_HOST" => host }
+def rack_env(path: "/mcp", method: "GET", scheme: "https", host: "tool.example.com",
+             query: "", script_name: "", headers: {})
+  env = {
+    "REQUEST_METHOD" => method,
+    "SCRIPT_NAME" => script_name,
+    "PATH_INFO" => path,
+    "QUERY_STRING" => query,
+    "rack.url_scheme" => scheme,
+    "HTTP_HOST" => host
+  }
   headers.each { |name, value| env["HTTP_#{name.upcase.tr("-", "_")}"] = value }
   env
 end

@@ -13,9 +13,10 @@ class FakeVerifier
 end
 
 def access_token(token: "at_valid", scope: "mcp:tools", client_id: "client_abc",
-                 sub: "usr_123", sub_profile: "user", keycard_app_id: "app_abc")
+                 sub: "usr_123", sub_profile: "user", keycard_app_id: "app_abc",
+                 aud: "https://tool.example.com")
   claims = {
-    "iss" => "https://acme.test", "sub" => sub, "aud" => "https://tool.example.com",
+    "iss" => "https://acme.test", "sub" => sub, "aud" => aud,
     "exp" => Time.now.to_i + 300, "iat" => Time.now.to_i, "client_id" => client_id,
     "scope" => scope, "sub_profile" => sub_profile, "keycard_app_id" => keycard_app_id
   }

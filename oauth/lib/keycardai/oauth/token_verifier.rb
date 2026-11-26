@@ -84,30 +84,43 @@ module Keycardai
     # zone issuer(s); JWKS and discovery caches are keyed by issuer so no
     # zone's keys are ever served for another.
     class TokenVerifier
-      # @param issuers [String, Array<String>] trusted zone issuer URL(s)
-      # @param audiences [String, Array<String>, nil] when set, tokens must
-      #   carry an intersecting aud; when nil, the verifier accepts a token
-      #   minted for any resource in the zone and warns once at construction
+      # @return [ResourceBinding] the validated resource-binding mode
+      attr_reader :resource_binding
+      # @return [Array<String>] trusted zone issuer URLs
+      attr_reader :issuers
+      # @return [Hash{String => String}] zone ID to issuer URL map in zone modes
+      attr_reader :zone_issuers
+
+      # @param issuers [String, Array<String>, Hash{String => String}, nil] trusted zone issuer URL(s)
+      # @param issuer [String, nil] single issuer URL, or base issuer URL for zone-scoped modes
+      # @param audiences [String, Array<String>, nil] accepted audiences in multi_resource or legacy mode
+      # @param resource_identifier [String, nil] exact HTTP(S) URL or URN in single-resource mode
+      # @param resource_identifiers_by_zone [Hash{String => String}, nil] zone ID to identifier map
+      # @param multi_resource [Boolean] explicit multi-resource or shared-discovery opt-in
+      # @param allow_any_audience [Boolean] explicit opt-out from audience validation
+      # @param resource_binding [ResourceBinding, nil] pre-validated binding (internal composition)
       # @param http_client [#get] pluggable transport
       # @param key_ttl [Numeric] JWKS key cache lifetime in seconds
       # @param discovery_ttl [Numeric] jwks_uri cache lifetime in seconds
       # @param fetch_timeout [Numeric] discovery and JWKS fetch timeout
       # @param clock [#call] returns the current Time; override in tests
-      # @raise [ConfigurationError] no trusted issuer or explicitly empty audiences
-      def initialize(issuers:, audiences: nil, http_client: HTTP::NetHTTPClient.new,
+      # @raise [ConfigurationError] invalid or conflicting mode options or no trusted issuer
+      def initialize(issuers: nil, issuer: nil, audiences: nil,
+                     resource_identifier: nil, resource_identifiers_by_zone: nil,
+                     multi_resource: false, allow_any_audience: false,
+                     resource_binding: nil,
+                     http_client: HTTP::NetHTTPClient.new,
                      key_ttl: JWKSKeyring::DEFAULT_KEY_TTL, discovery_ttl: JWKSKeyring::DEFAULT_DISCOVERY_TTL,
                      fetch_timeout: JWKSKeyring::DEFAULT_FETCH_TIMEOUT, clock: MetadataRetry::WALL_CLOCK)
-        @issuers = Array(issuers).reject { |issuer| issuer.nil? || issuer.empty? }
-        raise ConfigurationError, "TokenVerifier requires at least one trusted issuer" if @issuers.empty?
-        raise ConfigurationError, "audiences must not be empty" if audiences.is_a?(Array) && audiences.empty?
-
-        if audiences.nil?
-          warn "Keycardai::OAuth::TokenVerifier has no audiences configured, so it accepts a token minted " \
-               "for any resource in the zone; pass audiences: with this server's registered resource identifier.",
-               uplevel: 1
-        end
-
-        @audiences = audiences
+        @resource_binding = resource_binding || ResourceBinding.resolve(
+          resource_identifier: resource_identifier,
+          resource_identifiers_by_zone: resource_identifiers_by_zone,
+          multi_resource: multi_resource,
+          allow_any_audience: allow_any_audience,
+          audiences: audiences,
+          component: "Keycardai::OAuth::TokenVerifier"
+        )
+        @issuers, @zone_issuers = resolve_issuers(issuers, issuer)
         @clock = clock
         @keyring = JWKSKeyring.new(http_client: http_client, key_ttl: key_ttl,
                                    discovery_ttl: discovery_ttl, fetch_timeout: fetch_timeout, clock: clock)
@@ -119,21 +132,27 @@ module Keycardai
       # @return [AccessToken]
       # @raise [InvalidTokenError, JWKSError]
       def verify_token(token)
-        verify_against(@issuers, token)
+        raise InvalidTokenError, "per-zone verifier requires verify_token_for_zone" if @resource_binding.per_zone?
+
+        verify_against(@issuers, token, @resource_binding.audiences)
       end
 
-      # Verify a bearer token pinned to one zone's issuer. A token minted by
-      # any other zone is rejected before key resolution, and an issuer
-      # outside the configured allowlist fails closed.
+      # Verify a bearer token pinned to one zone's issuer or zone ID. A token
+      # minted by any other zone is rejected before key resolution, and an
+      # unconfigured zone fails closed.
       #
       # @param token [String]
-      # @param issuer [String] the zone's issuer URL
+      # @param zone_or_issuer [String] zone ID (in zone modes) or zone issuer URL
       # @return [AccessToken]
       # @raise [InvalidTokenError, JWKSError]
-      def verify_token_for_zone(token, issuer)
-        raise InvalidTokenError, "zone issuer is not configured on this verifier" unless @issuers.include?(issuer)
+      def verify_token_for_zone(token, zone_or_issuer)
+        return verify_per_zone(token, zone_or_issuer) if @resource_binding.per_zone?
+        return verify_shared_zone(token, zone_or_issuer) if @resource_binding.shared_discovery?
+        unless @issuers.include?(zone_or_issuer)
+          raise InvalidTokenError, "zone issuer is not configured on this verifier"
+        end
 
-        verify_against([issuer], token)
+        verify_against([zone_or_issuer], token, @resource_binding.audiences)
       end
 
       # Drop all cached keys and discovery results.
@@ -145,8 +164,84 @@ module Keycardai
 
       private
 
-      def verify_against(issuers, token)
-        claims = JWTVerifier.new(issuers: issuers, keyring: @keyring, audiences: @audiences,
+      def verify_per_zone(token, zone_or_issuer)
+        zone_id = @zone_issuers.key?(zone_or_issuer) ? zone_or_issuer : @zone_issuers.key(zone_or_issuer)
+        raise InvalidTokenError, "zone is not configured on this verifier" unless zone_id
+
+        verify_against([@zone_issuers[zone_id]], token, [@resource_binding.zone_identifiers[zone_id].raw])
+      end
+
+      def verify_shared_zone(token, zone_or_issuer)
+        zone_issuer = @zone_issuers[zone_or_issuer] || (@issuers.include?(zone_or_issuer) ? zone_or_issuer : nil)
+        raise InvalidTokenError, "zone issuer is not configured on this verifier" unless zone_issuer
+
+        verify_against([zone_issuer], token, @resource_binding.audiences)
+      end
+
+      def resolve_issuers(issuers, issuer)
+        return resolve_zone_issuers(issuers, issuer) if @resource_binding.zone_mode?
+
+        raw = issuers.nil? ? issuer : issuers
+        list = Array(raw).reject { |item| item.nil? || item.empty? }.freeze
+        raise ConfigurationError, "TokenVerifier requires at least one trusted issuer" if list.empty?
+
+        [list, {}.freeze]
+      end
+
+      def resolve_zone_issuers(issuers, issuer)
+        return resolve_zone_issuer_hash(issuers) if issuers.is_a?(Hash)
+
+        base = issuer || (issuers if issuers.is_a?(String))
+        return resolve_derived_zone_issuers(base, issuers) unless base.to_s.empty?
+        return match_zone_issuer_array(issuers) if issuers.is_a?(Array) && !issuers.empty?
+
+        raise ConfigurationError, "TokenVerifier requires at least one trusted issuer"
+      end
+
+      def resolve_zone_issuer_hash(issuers)
+        expected = @resource_binding.zone_identifiers.keys.sort
+        unless issuers.keys.sort == expected
+          raise ConfigurationError, "issuers keys must match resource_identifiers_by_zone keys"
+        end
+
+        zone_map = issuers.transform_values(&:to_s).freeze
+        [zone_map.values.freeze, zone_map]
+      end
+
+      def resolve_derived_zone_issuers(base, issuers)
+        zone_map = @resource_binding.zone_issuers(base).freeze
+        if issuers.is_a?(Array) && issuers.map { |i| i.to_s.chomp("/") }.sort != zone_map.values.sort
+          raise ConfigurationError, "trusted issuers must match the zones in resource_identifiers_by_zone"
+        end
+
+        [zone_map.values.freeze, zone_map]
+      end
+
+      # Trusted issuers keep their configured spelling, so a token whose iss
+      # carries a trailing slash still matches it exactly.
+      def match_zone_issuer_array(issuers)
+        configured = issuers.map(&:to_s)
+        zone_map = @resource_binding.zone_identifiers.keys.to_h do |zone_id|
+          [zone_id, find_unique_zone_issuer!(configured, zone_id)]
+        end.freeze
+        unless zone_map.values.sort == configured.sort
+          raise ConfigurationError, "trusted issuers must match the zones in resource_identifiers_by_zone"
+        end
+
+        [zone_map.values.freeze, zone_map]
+      end
+
+      def find_unique_zone_issuer!(normalized, zone_id)
+        matched = normalized.select { |url| URI.parse(url).host&.start_with?("#{zone_id}.") }
+        raise ConfigurationError, "cannot uniquely match issuer for zone #{zone_id}" unless matched.length == 1
+
+        matched.first
+      rescue URI::InvalidURIError => e
+        raise ConfigurationError, "invalid issuer URL: #{e.message}"
+      end
+
+      def verify_against(issuers, token, audiences)
+        claims = JWTVerifier.new(issuers: issuers, keyring: @keyring, audiences: audiences,
                                  clock: @clock).verify(token)
         audience = claims["aud"]
         claims = claims.merge("aud" => [audience]) if audience.is_a?(String)

@@ -4,8 +4,8 @@ require "json"
 
 module Keycardai
   module MCP
-    # Shared Rack plumbing: request-origin derivation and the RFC 6750
-    # challenge responses. Not public API.
+    # Shared Rack plumbing: request-origin derivation, request target matching,
+    # and RFC 6750 challenge responses. Not public API.
     module RackSupport
       module_function
 
@@ -22,22 +22,69 @@ module Keycardai
         "#{scheme}://#{host}"
       end
 
+      # The public request path (before in-app mount stripping) and query string.
+      def request_path_and_query(env)
+        ["#{env["SCRIPT_NAME"]}#{env["PATH_INFO"]}", env["QUERY_STRING"].to_s]
+      end
+
       # The RFC 9728 protected-resource metadata URL advertised in challenges.
       def resource_metadata_url(env)
         "#{origin(env)}/.well-known/oauth-protected-resource"
       end
 
+      # Compute the resource_metadata URL for a challenge under the given
+      # ResourceBinding, or nil when the mode or request target omits it.
+      def challenge_metadata_url(env, binding: nil, zone_id: nil)
+        return resource_metadata_url(env) if binding.nil? || binding.legacy?
+
+        identifier = identifier_for_challenge(binding, zone_id)
+        return nil unless identifier
+
+        path, query = request_path_and_query(env)
+        identifier.matches_request?(path: path, query: query) ? identifier.metadata_url : nil
+      end
+
+      def identifier_for_challenge(binding, zone_id)
+        if binding.single_resource? || binding.shared_discovery?
+          binding.identifier
+        elsif binding.per_zone? && zone_id
+          binding.zone_identifiers[zone_id]
+        end
+      end
+
+      # Enforce an explicit binding's audience in the middleware too, so a
+      # caller-supplied verifier that ignores audiences cannot admit a token
+      # minted for another resource.
+      def audience_matches?(access_token, binding, zone_id)
+        expected = expected_audiences(binding, zone_id)
+        return true if expected.nil?
+        return false unless access_token.respond_to?(:audiences)
+
+        Array(access_token.audiences).intersect?(expected)
+      end
+
+      def expected_audiences(binding, zone_id)
+        return nil if binding.nil?
+
+        case binding.mode
+        when :single_resource then [binding.identifier.raw]
+        when :per_zone then zone_id && [binding.zone_identifiers.fetch(zone_id).raw]
+        when :shared_discovery, :multi_resource then binding.audiences
+        end
+      end
+
       # An RFC 6750 challenge response. A nil error code produces the bare
       # challenge used for missing credentials.
-      def challenge_response(env, status:, error: nil, description: nil)
+      def challenge_response(env, status:, error: nil, description: nil, binding: nil,
+                             zone_id: nil, include_metadata: true)
         params = []
         params << %(error="#{error}") if error
         params << %(error_description="#{description}") if description
-        params << %(resource_metadata="#{resource_metadata_url(env)}")
+        metadata_url = include_metadata ? challenge_metadata_url(env, binding: binding, zone_id: zone_id) : nil
+        params << %(resource_metadata="#{metadata_url}") if metadata_url
+        header = params.empty? ? "Bearer" : "Bearer #{params.join(", ")}"
         body = JSON.dump({ "error" => error || "unauthorized" })
-        [status,
-         { "content-type" => "application/json", "www-authenticate" => "Bearer #{params.join(", ")}" },
-         [body]]
+        [status, { "content-type" => "application/json", "www-authenticate" => header }, [body]]
       end
 
       def json_response(payload, status: 200, headers: {})
