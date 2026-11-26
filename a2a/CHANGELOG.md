@@ -13,6 +13,20 @@ token exchange that keeps the user as the subject, and JSON-RPC `message/send`
 invocation. Wraps no A2A SDK; hosting an agent inside a framework is out of
 scope.
 
+## 0.4.0-keycardai-a2a (2026-11-26)
+
+
+- feat(keycardai-a2a)!: require trusted delegation endpoint origins (#111)
+- DelegationClient#invoke refuses a card invocation endpoint on another origin with a non-retryable DiscoveryError before the token exchange, unless the origin is listed in trusted_endpoint_origins (keycard-sdk-spec#155, SDK-103). DiscoveryError now reports retryable? for every raise.
+- fix(keycardai-a2a): leave the credential out of DelegationClient printed forms (SDK-126) (#107)
+- * fix(keycardai-a2a): leave the credential out of DelegationClient's printed forms
+- Refs SDK-126.
+- (cherry picked from commit 4d56cea7ab1e10081ea806bde2985fd7409d3b10)
+- * fix(keycardai-a2a): format delegation clients independently of OAuth
+- ---------
+- Co-authored-by: Larry Osakwe <23560354+Larry-Osakwe@users.noreply.github.com>
+Co-authored-by: devin-ai-keycard <devin-ai@keycard.ai>
+
 ## 0.3.0-keycardai-a2a (2026-11-26)
 
 
