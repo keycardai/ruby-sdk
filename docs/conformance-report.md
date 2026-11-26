@@ -9,10 +9,10 @@ reproducible with the commands in the last section.
 | | |
 | --- | --- |
 | Gems | `keycardai-oauth`, `keycardai-mcp`, `keycardai-a2a` |
-| Capability specs covered | 21 of 24, 2 excluded on purpose, `delegated-access/as-itself` an open gap |
+| Capability specs covered | 23 of 27, 2 excluded on purpose, with `delegated-access/as-itself` and `delegated-access/local-agent-token-source` not covered |
 | Partial coverage | `authorization-code-pkce` rows 8 to 11, 19, and 22 (the stateless web-app begin/complete pair) are unshipped; Ruby covers the flow's building blocks, refresh and the code exchange with a credential, and the loopback `authenticate` |
-| RSpec examples | 649 across the three gems, including 28 for credential discovery |
-| Live-zone integration rows | 13 passing against a real zone; 2 credential discovery rows not run |
+| RSpec examples | 755 across the three gems, including 28 for credential discovery |
+| Live-zone integration rows | 13 passing against a real zone; 2 credential discovery and 7 token introspection rows not run |
 | A2A delegation checks | 11 of 11 hermetic, plus a live run |
 | MCP server end-to-end checks | 8 of 8 hermetic, against the official `mcp` gem |
 | Ruby versions | 3.2, 3.4, 4.0 in CI |
@@ -34,12 +34,13 @@ which are labelled without a row number.
 | `jwt-jwks/jwks-caching` | `jwks_caching_spec.rb` | 11 |
 | `oauth-client/authorization-server-discovery` | `authorization_server_discovery_spec.rb` | 16 (v7 rows 1-15) |
 | `oauth-client/token-revocation` | `token_revocation_spec.rb` | 15 |
-| `oauth-client/token-introspection` | `token_introspection_spec.rb` | 18 (v1 rows 1-15; live integration rows not run) |
+| `oauth-client/token-introspection` | `token_introspection_spec.rb` | 19 (v1 rows 1-15; live integration rows not run) |
 | `oauth-client/userinfo` | `userinfo_spec.rb` | 8 |
 | `oauth-client/client-credentials` | `client_credentials_spec.rb` | 28 |
 | `oauth-client/token-exchange` | `token_exchange_spec.rb` | 11 |
 | `oauth-client/dynamic-client-registration` | `dynamic_client_registration_spec.rb` | 5 |
 | `oauth-client/authorization-code-pkce` | `authorization_code_pkce_spec.rb` + `authenticate_flow_spec.rb` | 23 |
+| `oauth-client/device-authorization` | `device_authorization_spec.rb` | 129 |
 | `application-credentials/client-secret` | `client_secret_spec.rb` | 6 |
 | `application-credentials/web-identity` | `web_identity_spec.rb` | 8 |
 | `application-credentials/workload-identity` | `workload_identity_spec.rb` | 10 |
@@ -87,6 +88,7 @@ rows against a real Keycard zone. Objects are provisioned by
 | access-context | 2: one failing resource yields `partial_error` | pass |
 | credential-discovery | 1: discover a client secret and exchange a token against a live zone | not run |
 | credential-discovery | 2: discover a projected token and exchange using the same application | not run |
+| token-introspection | 1-7: token status, caller visibility, revoked or expired tokens and sessions, and client authentication | not run |
 
 Two further end-to-end suites run without any zone:
 `examples/mcp-server/bin/selftest` (8 checks, an MCP server on the official
