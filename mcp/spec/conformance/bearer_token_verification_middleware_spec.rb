@@ -769,6 +769,14 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
       ).to_stderr
     end
 
+    it "logs the verified issuer and the error message without logging the bearer token" do
+      http = introspection_http { raise Keycardai::OAuth::NetworkError, "connection refused for #{token}" }
+      gated = gate(http_client: http)
+      message = /\A[^\n]*#{Regexp.escape(zone_issuer)}[^\n]*connection refused for \[REDACTED\][^\n]*\n\z/
+
+      expect { 2.times { expect_unavailable(gated) } }.to output(message).to_stderr
+    end
+
     it "passes the configured timeout to introspection discovery and the token status request" do
       expect(http).to receive(:get).with("#{zone_issuer}/.well-known/oauth-authorization-server",
                                          hash_including(timeout: 2)).and_call_original

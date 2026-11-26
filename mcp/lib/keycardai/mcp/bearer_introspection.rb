@@ -34,6 +34,7 @@ module Keycardai
       private
 
       def check(access_token)
+        token = access_token.token
         issuer = access_token.issuer
         unless @issuers.empty? || @issuers.include?(issuer.chomp("/"))
           raise Keycardai::OAuth::ConfigurationError, "no introspection credential for the verified issuer"
@@ -41,12 +42,12 @@ module Keycardai
 
         result = Keycardai::OAuth.introspect_token(
           issuer,
-          token: access_token.token, credential: @credential, metadata: @metadata.fetch(issuer),
+          token: token, credential: @credential, metadata: @metadata.fetch(issuer),
           http_client: @http_client, timeout: @timeout
         )
         result.active ? :active : :inactive
       rescue StandardError => e
-        report(e)
+        report(e, issuer, token)
         :unavailable
       end
 
@@ -62,15 +63,22 @@ module Keycardai
         raise Keycardai::OAuth::ConfigurationError, "an unscoped introspection credential requires one trusted issuer"
       end
 
-      def report(error)
+      def report(error, issuer, token)
         details = error_details(error)
-        key = [details, error.message.hash, error.cause&.message&.hash]
+        message = redact(error.message, token)
+        cause = redact(error.cause&.message.to_s, token)
+        key = [details, message.hash, cause.hash]
         @mutex.synchronize do
           return if @reported_errors.key?(key)
 
           @reported_errors[key] = true
-          warn "Keycardai::MCP::RequireBearerAuth: introspection failed (#{details.join(", ")})"
+          warn "Keycardai::MCP::RequireBearerAuth: introspection failed for #{redact(issuer.to_s, token).dump} " \
+               "(#{details.join(", ")}): #{message.dump}"
         end
+      end
+
+      def redact(message, token)
+        token.to_s.empty? ? message : message.gsub(token, "[REDACTED]")
       end
 
       def error_details(error)
