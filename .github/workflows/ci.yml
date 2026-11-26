@@ -27,6 +27,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Check gem LICENSE files
+        run: |
+          shopt -s nullglob
+          for gemspec in */*.gemspec; do
+            license="${gemspec%/*}/LICENSE"
+            if [[ ! -f "$license" ]]; then
+              printf 'Missing %s\n' "$license" >&2
+              exit 1
+            fi
+            if ! cmp -s -- LICENSE "$license"; then
+              printf '%s differs from the root LICENSE\n' "$license" >&2
+              exit 1
+            fi
+          done
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "4.0"
