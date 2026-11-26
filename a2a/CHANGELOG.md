@@ -13,6 +13,19 @@ token exchange that keeps the user as the subject, and JSON-RPC `message/send`
 invocation. Wraps no A2A SDK; hosting an agent inside a framework is out of
 scope.
 
+## 0.3.0-keycardai-a2a (2026-11-26)
+
+
+- feat(keycardai-a2a): bound decoded peer replies (#100)
+- * feat(keycardai-a2a): bound decoded peer replies
+- Co-Authored-By: Devin AI <158243242+devin-ai-integration[bot]@users.noreply.github.com>
+- * fix(keycardai-a2a): require keycardai-oauth 0.11.4 for the overflow retry_after
+- * test(keycardai-a2a): move peer reply size rows into the conformance suite
+- ---------
+- Co-authored-by: devin-ai-keycard <devin-ai@keycard.ai>
+Co-authored-by: Devin AI <158243242+devin-ai-integration[bot]@users.noreply.github.com>
+Co-authored-by: Larry Osakwe <23560354+Larry-Osakwe@users.noreply.github.com>
+
 ## 0.2.2-keycardai-a2a (2026-11-25)
 
 
