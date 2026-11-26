@@ -55,7 +55,6 @@ module Keycardai
         end
 
         result = Keycardai::OAuth.introspect_token(
-          issuer,
           token: token, credential: @credential, metadata: @metadata.fetch(issuer),
           http_client: @http_client, timeout: @timeout
         )

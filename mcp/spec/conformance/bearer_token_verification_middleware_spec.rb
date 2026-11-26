@@ -690,6 +690,28 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
       expect(http.calls.map(&:verb)).to eq(%i[get post get post])
     end
 
+    it "uses the advertised issuer for a credential keyed to its exact URL" do
+      advertised_issuer = "#{zone_issuer}/"
+      http = FakeHTTPClient.new do |_url, params|
+        if params
+          http_json({ "active" => true })
+        else
+          http_json({ "issuer" => advertised_issuer, "introspection_endpoint" => "#{zone_issuer}/inspect-token" })
+        end
+      end
+      zoned = double("exact-issuer credential", issuers: [advertised_issuer])
+      allow(zoned).to receive(:client_authentication) do |issuer:, endpoint:|
+        unless issuer == advertised_issuer
+          raise Keycardai::OAuth::ConfigurationError, "no credential configured for that issuer"
+        end
+
+        credential.client_authentication(issuer: issuer, endpoint: endpoint)
+      end
+
+      expect(gate(http_client: http, credential: zoned).call(bearer_env(token)).first).to eq(200)
+      expect(http.calls.map(&:verb)).to eq(%i[get post])
+    end
+
     it "paces discovery after an HTTP 503 with Retry-After" do
       unavailable = Keycardai::OAuth::HTTP::Response.new(status: 503, headers: { "retry-after" => "60" }, body: "")
       http = FakeHTTPClient.new { unavailable }
