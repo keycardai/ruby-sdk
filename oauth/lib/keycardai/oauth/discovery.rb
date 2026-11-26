@@ -17,6 +17,7 @@ module Keycardai
       :issuer, :token_endpoint, :authorization_endpoint, :jwks_uri, :registration_endpoint,
       :userinfo_endpoint, :end_session_endpoint, :device_authorization_endpoint,
       :revocation_endpoint, :revocation_endpoint_auth_methods_supported,
+      :introspection_endpoint, :introspection_endpoint_auth_methods_supported,
       :grant_types_supported, :token_endpoint_auth_methods_supported, :response_types_supported, :raw
     ) do
       # Every member but +issuer+ defaults to nil, and +raw+ to an empty
@@ -25,7 +26,8 @@ module Keycardai
       def initialize(issuer:, token_endpoint: nil, authorization_endpoint: nil, jwks_uri: nil,
                      registration_endpoint: nil, userinfo_endpoint: nil, end_session_endpoint: nil,
                      device_authorization_endpoint: nil, revocation_endpoint: nil,
-                     revocation_endpoint_auth_methods_supported: nil, grant_types_supported: nil,
+                     revocation_endpoint_auth_methods_supported: nil, introspection_endpoint: nil,
+                     introspection_endpoint_auth_methods_supported: nil, grant_types_supported: nil,
                      token_endpoint_auth_methods_supported: nil, response_types_supported: nil, raw: {})
         super
       end

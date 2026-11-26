@@ -178,6 +178,31 @@ Pass `metadata:` to reuse discovery results. The server must advertise a
 `revocation_endpoint`. The operation returns `nil` on HTTP 200, even for
 unknown, expired, or already revoked tokens. It does not retry.
 
+### Introspect a token
+
+Use a confidential client credential to check whether an access or refresh
+token is active (RFC 7662).
+
+```ruby
+credential = Keycardai::OAuth::ClientSecret.new(
+  ENV.fetch("KEYCARD_CLIENT_ID"),
+  ENV.fetch("KEYCARD_CLIENT_SECRET"),
+)
+
+result = Keycardai::OAuth.introspect_token(
+  "https://your-zone.keycard.cloud",
+  token: token_to_check,
+  credential: credential,
+)
+puts result.active
+```
+
+The server must advertise an `introspection_endpoint`. Pass `metadata:` to
+reuse discovery results. An inactive token returns `active: false` without
+raising an error. Active results expose standard claims through readers such
+as `result.scope` and preserve extra claims in `result.raw`. Results are not
+cached, and requests are not retried automatically.
+
 ### Sign in a device with no browser
 
 The device authorization grant (RFC 8628) gets a token for a person on a

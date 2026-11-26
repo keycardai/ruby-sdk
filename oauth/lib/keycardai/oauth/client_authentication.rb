@@ -8,7 +8,7 @@ module Keycardai
     #
     # Credentials used with ClientCredentialsClient must implement this method.
     # It is also required when a credential is used for device authorization,
-    # authorization code exchange with PKCE, token refresh, or token revocation.
+    # authorization code exchange with PKCE, token refresh, revocation, or introspection.
     #
     # It never includes a grant parameter such as grant_type or
     # subject_token_type. The caller merges it into its own request.
