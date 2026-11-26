@@ -37,8 +37,7 @@ module Keycardai
         @mutex = Mutex.new
       end
 
-      # Shows the zone URL, the audiences, and the credential's class. A
-      # credential defined outside the SDK may print its own secrets.
+      # Shows the zone URL, the audiences, and the credential's class.
       #
       # @return [String]
       def inspect

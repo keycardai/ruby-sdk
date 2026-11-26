@@ -12,4 +12,15 @@ RSpec.describe Keycardai::MCP::AuthProvider do
 
     expect([provider.inspect, provider.to_s, provider.pretty_inspect]).to eq([shown, shown, "#{shown}\n"])
   end
+
+  it "shows only the class of a caller-supplied credential" do
+    credential = Class.new do
+      def self.name = "AcmeCredential"
+      def inspect = "#<AcmeCredential secret=custom-secret>"
+    end.new
+    provider = described_class.new(zone_url: "https://acme.test", credential: credential)
+    shown = '#<Keycardai::MCP::AuthProvider zone_url="https://acme.test", audiences=nil, credential=AcmeCredential>'
+
+    expect([provider.inspect, provider.to_s, provider.pretty_inspect]).to eq([shown, shown, "#{shown}\n"])
+  end
 end
