@@ -127,6 +127,30 @@ RSpec.describe "Authorization server discovery" do
     expect(metadata.revocation_endpoint_auth_methods_supported).to be_nil
   end
 
+  it "14: types both introspection fields and preserves the signing algorithms in the raw document" do
+    endpoint = "#{zone.issuer}/introspect"
+    methods = %w[client_secret_basic client_secret_post private_key_jwt]
+    algorithms = %w[RS256 ES256 ES384 ES512]
+    http = zone.http_client(zone.metadata_url => lambda {
+      json_response(zone.metadata.merge("introspection_endpoint" => endpoint,
+                                        "introspection_endpoint_auth_methods_supported" => methods,
+                                        "introspection_endpoint_auth_signing_alg_values_supported" => algorithms))
+    })
+
+    metadata = discover(http)
+
+    expect(metadata.introspection_endpoint).to eq(endpoint)
+    expect(metadata.introspection_endpoint_auth_methods_supported).to eq(methods)
+    expect(metadata["introspection_endpoint_auth_signing_alg_values_supported"]).to eq(algorithms)
+  end
+
+  it "15: leaves both introspection fields nil when the document omits them" do
+    metadata = discover(zone.http_client)
+
+    expect(metadata.introspection_endpoint).to be_nil
+    expect(metadata.introspection_endpoint_auth_methods_supported).to be_nil
+  end
+
   it "raises a configuration error for an empty issuer" do
     expect { Keycardai::OAuth.fetch_authorization_server_metadata("", http_client: zone.http_client) }
       .to raise_error(Keycardai::OAuth::ConfigurationError)
