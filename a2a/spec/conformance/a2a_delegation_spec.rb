@@ -21,12 +21,12 @@ RSpec.describe "A2A delegation" do
     }
   end
 
-  def http(card_response: nil, token_response: nil, rpc_response: nil)
+  def http(card_response: nil, token_response: nil, rpc_response: nil, rpc_url: urls[:jsonrpc])
     routes = {
       urls[:zone_metadata] => http_json({ "issuer" => issuer, "token_endpoint" => urls[:token] }),
       urls[:token] => token_response || http_json({ "access_token" => "at_delegated" }),
       urls[:agent_card] => card_response || http_json(card),
-      urls[:jsonrpc] => rpc_response || http_json({ "jsonrpc" => "2.0", "id" => "1", "result" => rpc_result })
+      rpc_url => rpc_response || http_json({ "jsonrpc" => "2.0", "id" => "1", "result" => rpc_result })
     }
     FakeHTTPClient.new { |url, _params| routes[url] }
   end
@@ -162,6 +162,55 @@ RSpec.describe "A2A delegation" do
       .to raise_error(Keycardai::A2A::InvocationError) { |e|
         expect(e.rpc_error).to include("code" => -32_600)
       }
+  end
+
+  describe "invocation endpoint origins" do
+    [
+      ["12: invokes on the same origin", "https://agent-b.test/rpc", {}],
+      ["14: invokes on an allowlisted origin", "https://gateway.test/rpc",
+       { trusted_endpoint_origins: ["HTTPS://GATEWAY.test:443"] }],
+      ["15: matches the explicit default port", "https://agent-b.test:443/rpc", {}],
+      ["15b: matches scheme and host case-insensitively", "HTTPS://Agent-B.Test/rpc", {}]
+    ].each do |name, endpoint, opts|
+      it name do
+        transport = endpoint_transport(endpoint)
+        client(transport, **opts).invoke(target: target, subject_token: "at_user", message: {})
+
+        expect(transport.request_count(urls[:token])).to eq(1)
+        expect(transport.request_count(endpoint)).to eq(1)
+        rpc = transport.calls.find { |call| call.url == endpoint }
+        expect(rpc.headers["Authorization"]).to eq("Bearer at_delegated")
+      end
+    end
+
+    [
+      ["13: refuses another host", "https://other.test/rpc", "https://other.test:443", false],
+      ["15: refuses another port", "https://agent-b.test:8443/rpc", "https://agent-b.test:8443", false],
+      ["15: refuses another scheme", "http://agent-b.test/rpc", "http://agent-b.test:80", false],
+      ["15a: refuses another origin in a 0.3 card", "https://other.test/rpc", "https://other.test:443", true]
+    ].each do |name, endpoint, origin, legacy|
+      it name do
+        transport = endpoint_transport(endpoint, legacy: legacy)
+        opts = legacy ? { protocol_version: Keycardai::A2A::LEGACY_PROTOCOL_VERSION } : {}
+
+        expect { client(transport, **opts).invoke(target: target, subject_token: "at_user", message: {}) }
+          .to raise_error(Keycardai::A2A::DiscoveryError) { |e|
+            expect(e.message).to include(origin, target)
+            expect(e.retryable?).to be(false)
+          }
+        expect(transport.calls.map(&:url)).to eq([urls[:agent_card]])
+      end
+    end
+
+    def endpoint_transport(endpoint, legacy: false)
+      details = if legacy
+                  { "url" => endpoint }
+                else
+                  interface = { "url" => endpoint, "protocolBinding" => "JSONRPC", "protocolVersion" => "1.0" }
+                  { "supportedInterfaces" => [interface] }
+                end
+      http(card_response: http_json(card.merge(details)), rpc_url: endpoint)
+    end
   end
 
   it "honors a card-declared invocation endpoint over the convention path" do

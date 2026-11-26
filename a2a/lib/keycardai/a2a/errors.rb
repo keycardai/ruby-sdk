@@ -3,8 +3,17 @@
 module Keycardai
   module A2A
     # The target agent's card cannot be fetched, is not valid JSON, or is
-    # missing the required name.
-    class DiscoveryError < Keycardai::Error; end
+    # missing the required name, or its invocation endpoint is refused.
+    class DiscoveryError < Keycardai::Error
+      def initialize(message = nil, retryable: nil)
+        super(message)
+        @retryable = retryable
+      end
+
+      def retryable?
+        @retryable
+      end
+    end
 
     # An invocation reply exceeds the decoded peer limit.
     class InvocationResponseBodyTooLargeError < OAuth::ResponseBodyTooLargeError

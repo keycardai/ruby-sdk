@@ -28,6 +28,7 @@ module Keycardai
       #   for default card discovery and invocation transports (64 MiB by default)
       # @param discovery [ServiceDiscovery, nil] card resolution override
       # @param invoke_timeout [Numeric, nil] JSON-RPC call timeout
+      # @param trusted_endpoint_origins [Array<String>] trusted invocation origins, empty by default
       # @param protocol_version [String] the A2A generation to speak: PROTOCOL_VERSION
       #   (1.0: SendMessage, A2A-Version header, ROLE_USER roles, untagged text parts)
       #   or LEGACY_PROTOCOL_VERSION (0.3: message/send, X-A2A-Protocol-Version header,
@@ -37,7 +38,8 @@ module Keycardai
       def initialize(issuer:, credential: nil, client_id: nil, client_secret: nil,
                      http_client: nil, discovery: nil,
                      invoke_timeout: nil, protocol_version: PROTOCOL_VERSION,
-                     max_peer_response_bytes: PeerHTTP::DEFAULT_MAX_RESPONSE_BYTES)
+                     max_peer_response_bytes: PeerHTTP::DEFAULT_MAX_RESPONSE_BYTES,
+                     trusted_endpoint_origins: [])
         @exchange = OAuth::TokenExchangeClient.new(issuer: issuer, credential: credential,
                                                    client_id: client_id, client_secret: client_secret,
                                                    http_client: http_client || OAuth::HTTP::NetHTTPClient.new)
@@ -45,6 +47,7 @@ module Keycardai
         @discovery = discovery || ServiceDiscovery.new(http_client: @http_client)
         @invoke_timeout = invoke_timeout
         @wire = Wire.for(protocol_version)
+        @endpoint_origins = EndpointOrigins.new(trusted_endpoint_origins)
       end
 
       # Delegate a call to another agent: discover, exchange, invoke.
@@ -55,13 +58,15 @@ module Keycardai
       # @return [Result] message is the JSON-RPC result as the agent returned it:
       #   for a 1.0 agent an object with a +message+ or +task+ key
       # @raise [ArgumentError] protocol_version is unsupported
-      # @raise [DiscoveryError] the agent card cannot be resolved
+      # @raise [DiscoveryError] the agent card cannot be resolved or its endpoint is refused
       # @raise [Keycardai::OAuth::OAuthError] the exchange was rejected
       # @raise [InvocationError] the JSON-RPC call failed
       def invoke(target:, subject_token:, message:)
         card = @discovery.get_card(target)
+        endpoint = jsonrpc_url(target, card)
+        @endpoint_origins.check(endpoint, target)
         token = @exchange.exchange_token(subject_token: subject_token, resource: target.chomp("/"))
-        result = post_jsonrpc(jsonrpc_url(target, card), token.access_token, message)
+        result = post_jsonrpc(endpoint, token.access_token, message)
         Result.new(message: result, agent_card: card)
       end
 
