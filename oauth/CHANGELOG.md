@@ -15,6 +15,12 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.18.0-keycardai-oauth (2026-11-26)
+
+
+- feat(keycardai-oauth): add RFC 7662 token introspection (#132)
+- Adds introspect_token to keycardai-oauth per keycard-sdk-spec token-introspection v1 (spec#100), and types introspection_endpoint and introspection_endpoint_auth_methods_supported on AuthorizationServerMetadata (ID-881).
+
 ## 0.17.1-keycardai-oauth (2026-11-26)
 
 
