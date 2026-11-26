@@ -15,6 +15,13 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.16.0-keycardai-oauth (2026-11-26)
+
+
+- fix(keycardai-oauth)!: a credential without client authentication is a configuration error (SDK-170) (#119)
+- Refs SDK-170
+- BREAKING CHANGE: custom credentials that only define authorization_header now raise ConfigurationError at ClientCredentialsClient construction, so add client_authentication to them.
+
 ## 0.15.1-keycardai-oauth (2026-11-26)
 
 

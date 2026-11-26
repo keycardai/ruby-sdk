@@ -109,10 +109,21 @@ RSpec.describe Keycardai::OAuth::ClientCredentialsClient do
     expect(http.calls).to be_empty
   end
 
+  it "rejects a credential without client authentication at construction" do
+    http = token_http
+    credential = Object.new
+    credential.define_singleton_method(:authorization_header) { |**| "Basic #{["cid:csecret"].pack("m0")}" }
+
+    expect { client(http, credential: credential) }
+      .to raise_error(Keycardai::OAuth::ConfigurationError, /does not provide client authentication/)
+    expect(http.calls).to be_empty
+  end
+
   [Keycardai::OAuth::ClientSecret, Keycardai::OAuth::WorkloadIdentity].product(["request-id", nil]).each do |type, id|
     it "4d: bypasses configured #{type.name.split("::").last} for an explicit assertion (client_id: #{id.inspect})" do
       http = token_http
       credential = instance_double(type)
+      expect(credential).not_to receive(:client_authentication)
 
       client(http, credential: credential).request_token(
         client_assertion: "request-jwt", client_assertion_type: assertion_type, client_id: id
