@@ -67,13 +67,16 @@ RSpec.describe "printed forms" do
   end
 
   describe Keycardai::OAuth::ClientAuthentication do
-    it "shows only header and form field names while retaining the values for serialization" do
+    it "shows only header and form field names, and keeps the values in to_h" do
       auth = described_class.new(headers: { "Authorization" => "basic-secret" },
                                  params: { "client_assertion" => "assertion-secret", "client_id" => "cid" })
 
       expect_printed(auth, '#<data Keycardai::OAuth::ClientAuthentication headers=["Authorization"], ' \
                            'params=["client_assertion", "client_id"]>')
-      expect(JSON.parse(auth.to_json)).to eq(auth.to_h.transform_keys(&:to_s))
+      expect(auth.to_h).to eq(headers: { "Authorization" => "basic-secret" },
+                              params: { "client_assertion" => "assertion-secret", "client_id" => "cid" })
+      expect(auth.to_json).not_to include("basic-secret")
+      expect(auth.to_json).not_to include("assertion-secret")
     end
   end
 

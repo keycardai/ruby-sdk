@@ -11,7 +11,7 @@ module Keycardai
     # It never includes a grant parameter such as grant_type or
     # subject_token_type. The caller merges it into its own request.
     ClientAuthentication = Data.define(:headers, :params) do
-      include PrintedForm::Serializable
+      include PrintedForm
 
       # @param headers [Hash{String => String}]
       # @param params [Hash{String => String}] form fields
