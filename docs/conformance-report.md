@@ -11,7 +11,7 @@ reproducible with the commands in the last section.
 | Gems | `keycardai-oauth`, `keycardai-mcp`, `keycardai-a2a` |
 | Capability specs covered | 21 of 24, 2 excluded on purpose, `delegated-access/as-itself` an open gap |
 | Partial coverage | `authorization-code-pkce` rows 8 to 11, 19, and 22 (the stateless web-app begin/complete pair) are unshipped; Ruby covers the flow's building blocks, refresh and the code exchange with a credential, and the loopback `authenticate` |
-| RSpec examples | 570 across the three gems, including 26 for credential discovery |
+| RSpec examples | 647 across the three gems, including 26 for credential discovery |
 | Live-zone integration rows | 13 passing against a real zone; 2 credential discovery rows not run |
 | A2A delegation checks | 11 of 11 hermetic, plus a live run |
 | MCP server end-to-end checks | 8 of 8 hermetic, against the official `mcp` gem |
@@ -35,7 +35,7 @@ which are labelled without a row number.
 | `oauth-client/authorization-server-discovery` | `authorization_server_discovery_spec.rb` | 11 |
 | `oauth-client/token-revocation` | `token_revocation_spec.rb` | 15 |
 | `oauth-client/userinfo` | `userinfo_spec.rb` | 8 |
-| `oauth-client/client-credentials` | `client_credentials_spec.rb` | 9 |
+| `oauth-client/client-credentials` | `client_credentials_spec.rb` | 28 |
 | `oauth-client/token-exchange` | `token_exchange_spec.rb` | 11 |
 | `oauth-client/dynamic-client-registration` | `dynamic_client_registration_spec.rb` | 5 |
 | `oauth-client/authorization-code-pkce` | `authorization_code_pkce_spec.rb` + `authenticate_flow_spec.rb` | 23 |

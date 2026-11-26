@@ -14,7 +14,7 @@ module Keycardai
       include TokenRequests
 
       # @param issuer [String] the zone's issuer URL
-      # @param credential [Object, nil] provides client authentication;
+      # @param credential [#client_authentication, nil] provides client authentication;
       #   exclusive with client_id/client_secret
       # @param client_id [String, nil] shared-secret client id (HTTP Basic)
       # @param client_secret [String, nil] shared-secret client secret;
@@ -24,13 +24,17 @@ module Keycardai
       # @param discovery_ttl [Numeric] token-endpoint cache lifetime in seconds
       # @param clock [#call] returns the current Time; override in tests
       # @raise [ConfigurationError] when only one of client_id/client_secret is
-      #   given, or a credential is combined with a raw pair
+      #   given, a credential is combined with a raw pair, or the credential
+      #   does not provide client authentication
       def initialize(issuer:, credential: nil, client_id: nil, client_secret: nil,
                      http_client: HTTP::NetHTTPClient.new, timeout: nil,
                      discovery_ttl: TokenRequests::DEFAULT_DISCOVERY_TTL, clock: MetadataRetry::WALL_CLOCK)
         initialize_token_client(issuer: issuer, credential: credential, client_id: client_id,
                                 client_secret: client_secret, http_client: http_client, timeout: timeout,
                                 discovery_ttl: discovery_ttl, clock: clock)
+        return unless credential && !credential.respond_to?(:client_authentication)
+
+        raise ConfigurationError, "#{credential.class} does not provide client authentication"
       end
 
       # Request a token for the client itself.
@@ -70,9 +74,7 @@ module Keycardai
         end
         # A ClientSecret resolves its Basic header without the token endpoint,
         # so an unconfigured zone fails before any discovery request.
-        if @credential.is_a?(ClientSecret) || !@credential.respond_to?(:client_authentication)
-          return post_with_header(params, issuer)
-        end
+        return post_with_header(params, issuer) if @credential.is_a?(ClientSecret)
 
         post_authenticated_credentials(params, issuer)
       end
