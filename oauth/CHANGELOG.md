@@ -15,6 +15,20 @@ the loopback flow (RFC 8252), JWT signing and verification with a caching JWKS
 keyring, the three application credentials (ClientSecret with multi-zone,
 WebIdentity, WorkloadIdentity with pluggable token sources), and AccessContext.
 
+## 0.17.1-keycardai-oauth (2026-11-26)
+
+
+- fix(keycardai-oauth): the request timeout bounds the credential call and the whole request (SDK-121) (#120)
+- * fix(keycardai-oauth): the request timeout bounds the credential call and the whole request (SDK-121)
+- * fix(keycardai-oauth): account for proxy lookup before connecting (SDK-121)
+- * fix(keycardai-oauth): return complete responses after the deadline (SDK-121)
+- * fix(keycardai-oauth): require explicit credential timeout keywords (SDK-121)
+- * fix(keycardai-oauth): scope the request deadline to the device grant (SDK-121)
+- * test(keycardai-oauth): leave the forwarding example unnumbered (SDK-121)
+- * fix(keycardai-oauth): reflect on credential methods without dispatch (SDK-121)
+- ---------
+- Co-authored-by: devin-ai-keycard <devin-ai@keycard.ai>
+
 ## 0.17.0-keycardai-oauth (2026-11-26)
 
 
