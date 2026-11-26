@@ -135,8 +135,11 @@ module Keycardai
       # @param client_id [String, nil] public client; sent in every body
       # @param http_client [#get, #post_form] pluggable transport
       # @param timeout [Numeric, nil] per-request timeout in seconds, for
-      #   discovery, the device authorization request, and each poll. nil
-      #   uses the transport's default, 10 seconds for NetHTTPClient.
+      #   discovery, the device authorization request, and each poll. The
+      #   device requests share their budget with client authentication.
+      #   nil uses the transport's default, 10 seconds for NetHTTPClient.
+      #   Credentials can accept a timeout in seconds or a deadline Time
+      #   to stop cooperatively. Otherwise the client checks when they return.
       # @param clock [#call] returns the current Time; read for expires_at,
       #   the poll waits, and the discovery cache
       # @param sleep [#call] waits the given number of seconds. Inject fakes
@@ -158,8 +161,8 @@ module Keycardai
         @issuer = resolve_issuer(issuer, metadata)
         @credential = credential
         @client_id = client_id
-        @http_client = http_client
-        @timeout = timeout
+        @request = DeviceRequest.new(issuer: @issuer, credential: credential, client_id: client_id,
+                                     http_client: http_client, timeout: timeout)
         @clock = clock
         @sleep = sleep
         @endpoints = DeviceEndpoints.new(issuer: @issuer, metadata: metadata, http_client: http_client,
@@ -324,13 +327,9 @@ module Keycardai
       end
 
       def post(endpoint, params)
-        params, headers = authenticate(endpoint, params)
-        @http_client.post_form(endpoint, params, headers: headers, timeout: @timeout)
-      end
-
-      def authenticate(endpoint, params)
-        ClientAuth.apply(params, { "Accept" => "application/json" }, issuer: @issuer, endpoint: endpoint,
-                                                                     credential: @credential, client_id: @client_id)
+        deadline = @request.deadline
+        params, headers = @request.authenticate(endpoint, params, @request.credential_options(deadline))
+        @request.send_form(endpoint, params, headers, deadline)
       end
 
       def starting_interval(authorization, interval)
@@ -373,10 +372,12 @@ module Keycardai
       # poll. The credential is called outside every rescue, so its failure
       # is raised as is.
       def poll_step(authorization, endpoint, interval, cancellation)
-        params, headers = authenticate(endpoint, poll_params(authorization))
+        deadline = @request.deadline
+        options = with_poll_transport_errors(interval) { @request.credential_options(deadline) }
+        params, headers = @request.authenticate(endpoint, poll_params(authorization), options)
         cancellation.check
         check_expired(authorization)
-        response = send_poll(endpoint, params, headers, interval)
+        response = with_poll_transport_errors(interval) { @request.send_form(endpoint, params, headers, deadline) }
         begin
           [TokenRequests.parse_response(response), interval]
         rescue HTTPError => e
@@ -384,8 +385,8 @@ module Keycardai
         end
       end
 
-      def send_poll(endpoint, params, headers, interval)
-        @http_client.post_form(endpoint, params, headers: headers, timeout: @timeout)
+      def with_poll_transport_errors(interval)
+        yield
       rescue NetworkError => e
         # RFC 8628 §3.5: wait longer after a connection timeout.
         raise DevicePollError.new("device token poll failed: #{e.message}", interval: interval * 2)
@@ -409,6 +410,39 @@ module Keycardai
         end
       end
     end
+
+    # The credential step and the HTTP step draw from the same request budget.
+    class DeviceRequest
+      def initialize(issuer:, credential:, client_id:, http_client:, timeout:)
+        @issuer = issuer
+        @credential = credential
+        @client_id = client_id
+        @http_client = http_client
+        @timeout = timeout || (HTTP::NetHTTPClient::DEFAULT_TIMEOUT if http_client.is_a?(HTTP::NetHTTPClient))
+      end
+
+      def deadline
+        RequestDeadline.new(@timeout) if @timeout
+      end
+
+      def credential_options(deadline)
+        deadline&.credential_options(@credential) || {}
+      end
+
+      def authenticate(endpoint, params, options)
+        ClientAuth.apply(params, { "Accept" => "application/json" },
+                         issuer: @issuer, endpoint: endpoint, credential: @credential, client_id: @client_id,
+                         options: options)
+      end
+
+      def send_form(endpoint, params, headers, deadline)
+        remaining = deadline&.remaining
+        # Injected transports keep the numeric timeout interface.
+        timeout = @http_client.instance_of?(HTTP::NetHTTPClient) ? deadline : remaining
+        @http_client.post_form(endpoint, params, headers: headers, timeout: timeout).tap { deadline&.remaining }
+      end
+    end
+    private_constant :DeviceRequest
 
     # The device grant's two endpoints, from pre-discovered metadata or from
     # discovery. Discovered metadata is cached for +ttl+ seconds when both

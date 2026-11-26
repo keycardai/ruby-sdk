@@ -66,9 +66,9 @@ module Keycardai
       #   repeated keys such as resource survive
       # @param headers [Hash{String => String}]
       # @return [Array(Array<Array(String, String)>, Hash{String => String})]
-      def apply(params, headers, issuer:, endpoint:, credential: nil, client_id: nil, client_secret: nil)
+      def apply(params, headers, issuer:, endpoint:, credential: nil, client_id: nil, client_secret: nil, options: {})
         if credential
-          auth = credential.client_authentication(issuer: issuer, endpoint: endpoint)
+          auth = credential.client_authentication(issuer: issuer, endpoint: endpoint, **options)
           [params + auth.params.to_a, headers.merge(auth.headers)]
         elsif client_secret
           [params, headers.merge("Authorization" => HTTP.basic_authorization(client_id, client_secret))]

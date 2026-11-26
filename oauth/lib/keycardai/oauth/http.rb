@@ -5,6 +5,9 @@ require "net/http"
 require "uri"
 require "zlib"
 
+require_relative "request_deadline"
+require_relative "deadline_socket"
+
 module Keycardai
   module OAuth
     # Pluggable HTTP transport. Every network operation in the SDK goes
@@ -200,10 +203,7 @@ module Keycardai
       # module-level function defaults, keeps its sessions until it is garbage
       # collected, which closes the underlying sockets.
       class NetHTTPClient
-        # Open, read and write timeout for a request whose caller passed no
-        # timeout: 10 seconds, so a request to the zone cannot wait for
-        # Net::HTTP's 60. Each one bounds a single step of the request, such as
-        # one read from the socket, not the whole request.
+        # Whole-request timeout in seconds when the caller supplies none.
         DEFAULT_TIMEOUT = 10
 
         # What a request raises when the connection or the response fails:
@@ -243,54 +243,67 @@ module Keycardai
 
         # @param url [String]
         # @param headers [Hash{String => String}]
-        # @param timeout [Numeric, nil] open, read and write timeout in seconds
+        # @param timeout [Numeric, nil] whole-request timeout in seconds
         # @return [Response]
         # @raise [NetworkError] on DNS, TLS, connect, or timeout failures
         def get(url, headers: {}, timeout: nil)
+          deadline = request_deadline(timeout)
           uri = URI(url)
           request = Net::HTTP::Get.new(uri)
           headers.each { |name, value| request[name] = value }
-          perform(uri, request, timeout)
+          perform(uri, request, deadline)
         end
 
         # @param url [String]
         # @param params [Hash] form fields, sent application/x-www-form-urlencoded
         # @param headers [Hash{String => String}]
-        # @param timeout [Numeric, nil] open, read and write timeout in seconds
+        # @param timeout [Numeric, nil] whole-request timeout in seconds
         # @return [Response]
         # @raise [NetworkError] on DNS, TLS, connect, or timeout failures
         def post_form(url, params, headers: {}, timeout: nil)
+          deadline = request_deadline(timeout)
           uri = URI(url)
           request = Net::HTTP::Post.new(uri)
           headers.each { |name, value| request[name] = value }
           request.set_form_data(params)
-          perform(uri, request, timeout)
+          perform(uri, request, deadline)
         end
 
         # @param url [String]
         # @param payload [Hash] request body, sent as application/json
         # @param headers [Hash{String => String}]
-        # @param timeout [Numeric, nil] open, read and write timeout in seconds
+        # @param timeout [Numeric, nil] whole-request timeout in seconds
         # @return [Response]
         # @raise [NetworkError] on DNS, TLS, connect, or timeout failures
         def post_json(url, payload, headers: {}, timeout: nil)
+          deadline = request_deadline(timeout)
           uri = URI(url)
           request = Net::HTTP::Post.new(uri)
           request["Content-Type"] = "application/json"
           headers.each { |name, value| request[name] = value }
           request.body = JSON.dump(payload)
-          perform(uri, request, timeout)
+          perform(uri, request, deadline)
         end
 
         private
 
-        def perform(uri, request, timeout)
+        def request_deadline(timeout)
+          return timeout if timeout.is_a?(RequestDeadline)
+
+          RequestDeadline.new(timeout || DEFAULT_TIMEOUT)
+        end
+
+        def perform(uri, request, deadline)
           http = session_for(uri)
-          configure_http(http, timeout, request)
+          http.request_deadline = deadline
+          configure_http(http, request)
           response, body, body_error = execute_request(http, request)
+          deadline.remaining
           build_response(response, body, body_error)
         rescue *TRANSPORT_ERRORS => e
           raise NetworkError, "request to #{uri.host} failed: #{e.class}"
+        ensure
+          http.request_deadline = nil if http
         end
 
         def execute_request(http, request)
@@ -310,11 +323,10 @@ module Keycardai
           raise
         end
 
-        def configure_http(http, timeout, request)
-          http.open_timeout = timeout || DEFAULT_TIMEOUT
-          http.read_timeout = timeout || DEFAULT_TIMEOUT
-          http.write_timeout = timeout || DEFAULT_TIMEOUT
+        def configure_http(http, request)
+          http.apply_deadline
           http.start unless http.started?
+          http.apply_deadline
           # Net::HTTP does not report a gzip stream that ends early, so the
           # client decompresses the body itself. Assigning Accept-Encoding
           # turns off Net::HTTP's decompression.
@@ -332,6 +344,7 @@ module Keycardai
           return http if http&.started?
 
           http = Net::HTTP.new(uri.host, uri.port)
+          http.extend(DeadlineSession)
           http.use_ssl = uri.scheme == "https"
           # Net::HTTP retries a failed GET once by default.
           http.max_retries = 0
