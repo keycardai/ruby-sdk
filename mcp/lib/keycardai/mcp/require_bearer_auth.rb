@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "bearer_introspection"
+
 module Keycardai
   module MCP
     # Rack middleware verifying the Authorization bearer token against the
@@ -32,12 +34,15 @@ module Keycardai
       # @param allow_any_audience [Boolean] explicit opt-out from audience validation
       # @param audiences [String, Array<String>, nil] accepted audiences in multi_resource or legacy mode
       # @param zone_resolver [#call, nil] request-only zone selector `(env) -> zone_id` for per-zone mode
-      # @param http_client [#get, nil] transport used when constructing a verifier from zone_url
+      # @param http_client [#get, #post_form, nil] transport for an internally constructed verifier and introspection
+      # @param introspect [Boolean] check token status after local verification and scope checks
+      # @param credential [#client_authentication, nil] credential of the Application that owns the Resource
+      # @param timeout [Numeric, nil] introspection HTTP request timeout in seconds
       # @raise [Keycardai::OAuth::ConfigurationError] invalid mode, missing verifier, or verifier mismatch
       def initialize(app, verifier: nil, zone_url: nil, issuer: nil, required_scopes: nil,
                      resource_identifier: nil, resource_identifiers_by_zone: nil,
                      multi_resource: false, allow_any_audience: false, audiences: nil,
-                     zone_resolver: nil, http_client: nil)
+                     zone_resolver: nil, http_client: nil, introspect: false, credential: nil, timeout: nil)
         @app = app
         @required_scopes = Array(required_scopes)
         @zone_resolver = zone_resolver
@@ -46,12 +51,14 @@ module Keycardai
           mode_options: {
             resource_identifier: resource_identifier,
             resource_identifiers_by_zone: resource_identifiers_by_zone,
-            multi_resource: multi_resource,
-            allow_any_audience: allow_any_audience,
-            audiences: audiences
+            multi_resource: multi_resource, allow_any_audience: allow_any_audience, audiences: audiences
           }
         )
         validate_zone_resolver! if @resource_binding&.per_zone?
+        return unless introspect
+
+        @introspection = BearerIntrospection.new(verifier: @verifier, credential: credential, http_client: http_client,
+                                                 timeout: timeout)
       end
 
       def call(env)
@@ -69,7 +76,7 @@ module Keycardai
       private
 
       def call_per_zone(env, binding)
-        zone_id = resolve_request_zone(env)
+        zone_id = @zone_resolver.call(env)
         unless zone_id && binding.zone_identifiers.key?(zone_id)
           return RackSupport.challenge_response(env, status: 401, binding: binding, include_metadata: false)
         end
@@ -82,11 +89,10 @@ module Keycardai
         @resource_binding || env[ENV_RESOURCE_BINDING]
       end
 
-      # An upstream gate's verified token is reused only when this gate has no
-      # binding of its own or the same binding; otherwise this gate verifies
-      # the token against its own verifier and audience policy.
+      # The gate reuses upstream auth only for a compatible binding and when
+      # introspection does not need the issuer verified by this gate.
       def reuse_upstream_auth?(upstream)
-        @resource_binding.nil? || (!upstream.nil? && @resource_binding.compatible_with?(upstream))
+        !@introspection && (@resource_binding.nil? || (upstream && @resource_binding.compatible_with?(upstream)))
       end
 
       def authenticate_request(env, binding, zone_id)
@@ -121,7 +127,6 @@ module Keycardai
                                                      description: failure, binding: binding, zone_id: zone_id)
         end
 
-        env[ENV_AUTH_INFO] = access_token
         enforce_scopes(env, access_token, binding, zone_id)
       end
 
@@ -133,6 +138,10 @@ module Keycardai
                                                      binding: binding, zone_id: zone_id)
         end
 
+        introspection_failure = @introspection&.failure_response(env, access_token, binding, zone_id)
+        return introspection_failure if introspection_failure
+
+        env[ENV_AUTH_INFO] = access_token
         @app.call(env)
       end
 
@@ -149,10 +158,6 @@ module Keycardai
         [nil, :unavailable]
       rescue Keycardai::Error => e
         [nil, e.message]
-      end
-
-      def resolve_request_zone(env)
-        @zone_resolver.call(env)
       end
 
       def resolve_verifier_and_binding(verifier:, base_issuer:, http_client:, mode_options:)

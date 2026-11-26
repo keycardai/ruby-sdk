@@ -5,7 +5,7 @@ require "openssl"
 
 # Conformance suite for keycard-sdk-spec
 # specs/server-bearer-auth/bearer-token-verification-middleware.md
-# (spec-version 7). Each example maps to a row of the spec's Unit Tests table;
+# (spec-version 8). Each numbered example maps to a Unit Tests row;
 # rows exercising construction, resource binding, and audience verification use
 # a real TokenVerifier over in-memory zones.
 RSpec.describe Keycardai::MCP::RequireBearerAuth do
@@ -547,6 +547,150 @@ RSpec.describe Keycardai::MCP::RequireBearerAuth do
           http_client: zone_http
         )
       end.to raise_error(Keycardai::OAuth::ConfigurationError)
+    end
+  end
+
+  context "with token introspection" do
+    let(:resource) { "https://api.example.com/mcp" }
+    let(:credential) { Keycardai::OAuth::ClientSecret.new("owner", "owner-secret") }
+    let(:token) { token_with_audience(resource) }
+    let(:verifier) { real_verifier(resource_identifier: resource) }
+
+    def introspection_http(&response)
+      FakeHTTPClient.new do |url, params|
+        if params
+          response.call(url)
+        else
+          issuer = url.delete_suffix("/.well-known/oauth-authorization-server")
+          http_json({ "issuer" => issuer, "introspection_endpoint" => "#{issuer}/inspect-token" })
+        end
+      end
+    end
+
+    let(:http) { introspection_http { http_json({ "active" => true }) } }
+
+    def gate(**options)
+      middleware(introspect: true, credential: credential, http_client: http, **options)
+    end
+
+    it "18: calls introspection with the presented token and the owning Application credential" do
+      status, = gate.call(bearer_env(token))
+
+      expect(status).to eq(200)
+      expect(http.calls.map(&:url)).to eq([
+                                            "#{zone_issuer}/.well-known/oauth-authorization-server",
+                                            "#{zone_issuer}/inspect-token"
+                                          ])
+      post = http.calls.last
+      expect(post).to have_attributes(verb: :post, params: [["token", token]])
+      expect(post.headers["Authorization"]).to eq(Keycardai::OAuth::HTTP.basic_authorization("owner", "owner-secret"))
+      expect(Keycardai::MCP.auth_info(probe.seen_env).client_id).to eq("client_abc")
+    end
+
+    it "19: returns an invalid_token challenge with resource metadata for an inactive token" do
+      http = introspection_http { http_json({ "active" => false }) }
+      status, headers, = gate(http_client: http).call(bearer_env(token))
+
+      expect(status).to eq(401)
+      expect(headers["www-authenticate"]).to include('error="invalid_token"',
+                                                     'resource_metadata="https://api.example.com/.well-known/oauth-protected-resource/mcp"')
+      expect(probe.ran?).to be(false)
+    end
+
+    it "20: returns an unchallenged 503 for transport, HTTP, metadata, OAuth, and malformed-response failures" do
+      clients = [
+        introspection_http { raise Keycardai::OAuth::NetworkError, "connection refused" },
+        introspection_http { http_json({}, status: 502) },
+        FakeHTTPClient.new { http_json({ "issuer" => "https://wrong.test" }) },
+        introspection_http { http_json({ "error" => "invalid_client" }, status: 401) },
+        introspection_http { http_json({ "error" => "server_error" }, status: 500) },
+        introspection_http { http_json({ "active" => "false" }) }
+      ]
+
+      clients.each do |client|
+        expect { expect_unavailable(gate(http_client: client)) }.to output(/introspection failed/).to_stderr
+      end
+      expect(probe.ran?).to be(false)
+    end
+
+    def expect_unavailable(gated, presented_token = token)
+      status, headers, body = gated.call(bearer_env(presented_token))
+      expect(status).to eq(503)
+      expect(headers).not_to have_key("www-authenticate")
+      expect(body.join).to eq('{"error":"temporarily_unavailable"}')
+    end
+
+    it "21: skips introspection for an invalid token and when introspect is omitted or false" do
+      expect(gate.call(bearer_env(foreign_resource_token)).first).to eq(401)
+      expect(middleware(http_client: http).call(bearer_env(token)).first).to eq(200)
+      expect(gate(introspect: false).call(bearer_env(token)).first).to eq(200)
+      expect(http.calls).to be_empty
+    end
+
+    it "22: checks the same token twice and denies it after it becomes inactive" do
+      results = [true, false]
+      http = introspection_http { http_json({ "active" => results.shift }) }
+      gated = gate(http_client: http)
+
+      expect(gated.call(bearer_env(token)).first).to eq(200)
+      expect(gated.call(bearer_env(token)).first).to eq(401)
+      expect(http.calls.count { |call| call.verb == :post }).to eq(2)
+    end
+
+    it "23: rejects missing, non-client-authenticating, and unscoped multi-zone credentials at construction" do
+      [nil, Object.new].each do |value|
+        expect { gate(credential: value) }.to raise_error(Keycardai::OAuth::ConfigurationError, /client authentication/)
+      end
+      multi = real_verifier(issuers: [zone_issuer, zone_b_issuer], resource_identifier: resource)
+      expect { described_class.new(probe, verifier: multi, introspect: true, credential: credential) }
+        .to raise_error(Keycardai::OAuth::ConfigurationError, /one trusted issuer/)
+      expect(http.calls).to be_empty
+    end
+
+    it "24: picks credentials by verified issuer and returns an unchallenged 503 for an unconfigured zone" do
+      multi = real_verifier(issuers: [zone_issuer, zone_a_issuer, zone_b_issuer], resource_identifier: resource)
+      zoned = Keycardai::OAuth::ClientSecret.new(zone_issuer => %w[owner secret], zone_a_issuer => %w[owner-a secret-a])
+      gated = described_class.new(probe, verifier: multi, introspect: true, credential: zoned, http_client: http)
+      tok_b = token_with_audience(resource, issuer: zone_b_issuer, key: zone_b_key, kid: "kid-b")
+      tok_a = token_with_audience(resource, issuer: zone_a_issuer, key: zone_a_key, kid: "kid-a")
+
+      expect { expect_unavailable(gated, tok_b) }.to output(/introspection failed/).to_stderr
+      expect(http.calls).to be_empty
+      expect(probe.ran?).to be(false)
+      expect(gated.call(bearer_env(tok_a)).first).to eq(200)
+      expect(http.calls.last.url).to eq("#{zone_a_issuer}/inspect-token")
+      expect(http.calls.last.headers["Authorization"])
+        .to eq(Keycardai::OAuth::HTTP.basic_authorization("owner-a", "secret-a"))
+    end
+
+    it "25: returns insufficient_scope without introspection when a required scope is missing" do
+      status, headers, = gate(required_scopes: ["mcp:admin"]).call(bearer_env(token))
+
+      expect(status).to eq(403)
+      expect(headers["www-authenticate"]).to include('error="insufficient_scope"')
+      expect(http.calls).to be_empty
+      expect(probe.ran?).to be(false)
+    end
+
+    it "logs each distinct introspection failure once without logging the server body" do
+      responses = [401, 401, 500]
+      http = introspection_http do
+        http_json({ "error" => "invalid_client", "error_description" => "sensitive" }, status: responses.shift)
+      end
+      gated = gate(http_client: http)
+
+      expect { 3.times { expect_unavailable(gated) } }.to output(
+        /\A(?!.*sensitive)[^\n]*HTTP 401[^\n]*\n[^\n]*HTTP 500[^\n]*\n\z/m
+      ).to_stderr
+    end
+
+    it "passes the configured timeout to introspection discovery and the token status request" do
+      expect(http).to receive(:get).with("#{zone_issuer}/.well-known/oauth-authorization-server",
+                                         hash_including(timeout: 2)).and_call_original
+      expect(http).to receive(:post_form).with("#{zone_issuer}/inspect-token", [["token", token]],
+                                               hash_including(timeout: 2)).and_call_original
+
+      expect(gate(timeout: 2).call(bearer_env(token)).first).to eq(200)
     end
   end
 
